@@ -27,12 +27,28 @@
 
 LUAU_FASTFLAG(DebugLuauFreezeArena)
 LUAU_FASTFLAG(DebugLuauForceAllNewSolverTests)
+LUAU_FASTFLAG(DebugLuauForceAllOldSolverTests)
 
 LUAU_FASTFLAG(DebugLuauAlwaysShowConstraintSolvingIncomplete);
+LUAU_FASTFLAG(DebugLuauForceOldSolver)
+LUAU_FASTFLAG(LuauDisallowExternClassInTypeDefinitions)
 
-#define DOES_NOT_PASS_NEW_SOLVER_GUARD_IMPL(line) ScopedFastFlag sff_##line{FFlag::LuauSolverV2, FFlag::DebugLuauForceAllNewSolverTests};
+#define DOES_NOT_PASS_NEW_SOLVER_GUARD_IMPL(line) ScopedFastFlag sff_##line{FFlag::DebugLuauForceOldSolver, !FFlag::DebugLuauForceAllNewSolverTests};
 
 #define DOES_NOT_PASS_NEW_SOLVER_GUARD() DOES_NOT_PASS_NEW_SOLVER_GUARD_IMPL(__LINE__)
+
+#define DOES_NOT_PASS_OLD_SOLVER_GUARD_IMPL(line) ScopedFastFlag sff_##line{FFlag::DebugLuauForceOldSolver, FFlag::DebugLuauForceAllOldSolverTests};
+
+#define DOES_NOT_PASS_OLD_SOLVER_GUARD() DOES_NOT_PASS_OLD_SOLVER_GUARD_IMPL(__LINE__)
+
+// If CALLGRIND is on, then disable the timeout (doctest treats a timeout of 0 as disabled).
+#ifdef CALLGRIND
+constexpr double LUAU_TIMEOUT = 0.0;
+#else
+constexpr double LUAU_TIMEOUT = 4.0;
+#endif
+
+
 
 namespace Luau
 {
@@ -140,12 +156,15 @@ struct Fixture
     TypeId requireType(const ScopePtr& scope, const std::string& name);
 
     std::optional<TypeId> findTypeAtPosition(Position position);
+    std::optional<TypeId> findTypeAtPosition(const ModuleName& moduleName, Position position);
     TypeId requireTypeAtPosition(Position position);
+    TypeId requireTypeAtPosition(const ModuleName& moduleName, Position position);
     std::optional<TypeId> findExpectedTypeAtPosition(Position position);
 
     std::optional<TypeId> lookupType(const std::string& name);
     std::optional<TypeId> lookupImportedType(const std::string& moduleAlias, const std::string& name);
     TypeId requireTypeAlias(const std::string& name);
+    TypeId requireExportedType(const std::string& name);
     TypeId requireExportedType(const ModuleName& moduleName, const std::string& name);
 
     TypeId parseType(std::string_view src);
@@ -161,6 +180,9 @@ struct Fixture
 
     // This makes sure that errant cases of constraint solving failing to complete still pop up in tests.
     ScopedFastFlag sff_DebugLuauAlwaysShowConstraintSolvingIncomplete{FFlag::DebugLuauAlwaysShowConstraintSolvingIncomplete, true};
+
+    // lots of tests might use declare class in type definitions - disable this and force all tests to adopt the new syntax
+    ScopedFastFlag sff_LuauDisallowExternClassInTypeDefinitions{FFlag::LuauDisallowExternClassInTypeDefinitions, true};
 
     TestFileResolver fileResolver;
     TestConfigResolver configResolver;
@@ -213,6 +235,11 @@ struct BuiltinsFixture : Fixture
 
     // For the purpose of our tests, we're always the latest version of type functions.
     Frontend& getFrontend() override;
+};
+
+struct IsSubtypeFixture : Fixture
+{
+    bool isSubtype(TypeId a, TypeId b);
 };
 
 std::optional<std::string> pathExprToModuleName(const ModuleName& currentModuleName, const std::vector<std::string_view>& segments);
