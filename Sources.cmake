@@ -408,6 +408,7 @@ target_sources(Luau.VM PRIVATE
     VM/src/lstate.cpp
     VM/src/lstring.cpp
     VM/src/lstrlib.cpp
+    VM/src/lextra.cpp
     VM/src/ltable.cpp
     VM/src/ltablib.cpp
     VM/src/ltm.cpp

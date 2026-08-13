@@ -32,10 +32,15 @@ void luaU_freeudata(lua_State* L, Udata* u, lua_Page* page)
     }
     else if (u->tag == UTAG_IDTOR)
     {
-        void (*dtor)(void*) = nullptr;
+        // Fork-owned: `lua_newuserdatadtor` accepts the two-argument
+        // `lua_Destructor` (state + data), matching mlua's Luau bindings
+        // (compiled against luau0-src 728). Upstream master reverted to a
+        // one-argument destructor for this path; the fork keeps the two-argument
+        // form so the mlua-compat idtor userdata is freed correctly.
+        lua_Destructor dtor = nullptr;
         memcpy(&dtor, &u->data + u->len - sizeof(dtor), sizeof(dtor));
         if (dtor)
-            dtor(u->data);
+            dtor(L, u->data);
     }
 
 

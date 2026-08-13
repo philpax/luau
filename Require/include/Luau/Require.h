@@ -168,7 +168,15 @@ LUALIB_API void luaopen_require(lua_State* L, luarequire_Configuration_init conf
 // takes two parameters: the string path to resolve and the chunkname of an
 // existing module. The path is resolved as if it were being required from the
 // module that the chunkname represents.
-LUALIB_API int luarequire_pushproxyrequire(lua_State* L, luarequire_Configuration_init config_init, void* ctx);
+//
+// Fork-owned: exported with C linkage even though LÖVR builds Luau without
+// `LUAU_EXTERN_C` on the Require target, because mlua's Rust bindings link
+// this symbol by its C name. Plain `extern "C"` rather than `LUALIB_API`,
+// which expands to `extern` and would read `extern "C" extern`.
+#ifdef __cplusplus
+extern "C"
+#endif
+int luarequire_pushproxyrequire(lua_State* L, luarequire_Configuration_init config_init, void* ctx);
 
 // Registers an aliased require path to a result. After registration, the given
 // result will always be immediately returned when the given path is required.

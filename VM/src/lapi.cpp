@@ -1486,6 +1486,28 @@ l_noret lua_errorL(lua_State* L)
     luaD_throw(L, LUA_ERRRUN);
 }
 
+// Fork-owned: mlua's Luau bindings link `lua_error` as a real symbol; the
+// fork's `lua.h` keeps it as a macro over `lua_errorL` for source callers, and
+// this function provides the link-time symbol the macro hides. The macro is
+// dropped for the definition and restored after, so in-file callers keep the
+// fork's 2-arg macro surface. The `LUA_API` declaration in `lua.h` gives it
+// `extern "C"` linkage under `LUAU_EXTERN_C`.
+#undef lua_error
+LUA_API l_noret lua_error(lua_State* L)
+{
+    api_checknelems(L, 1);
+
+    luaD_throw(L, LUA_ERRRUN);
+}
+#define lua_error(L) (lua_errorL(L), 0)
+
+// Fork-owned: see `lua.h`. `base_ci` is the C-entry frame; the chunk's own
+// frame is the first Lua frame above it.
+LUA_API int lua_vm_is_topframe(lua_State* L)
+{
+    return int(L->ci - L->base_ci) == 1 ? 1 : 0;
+}
+
 int lua_next(lua_State* L, int idx)
 {
     api_checknelems(L, 1);
@@ -1604,7 +1626,7 @@ void* lua_newuserdatataggedwithmetatable(lua_State* L, size_t sz, int tag)
     return u->data;
 }
 
-void* lua_newuserdatadtor(lua_State* L, size_t sz, void (*dtor)(void*))
+void* lua_newuserdatadtor(lua_State* L, size_t sz, lua_Destructor dtor)
 {
     api_check(L, dtor != nullptr);
     luaC_checkGC(L);

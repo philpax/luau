@@ -212,7 +212,12 @@ LUA_API int lua_pushthread(lua_State* L);
 LUA_API void lua_pushlightuserdatatagged(lua_State* L, void* p, int tag);
 LUA_API void* lua_newuserdatatagged(lua_State* L, size_t sz, int tag);
 LUA_API void* lua_newuserdatataggedwithmetatable(lua_State* L, size_t sz, int tag); // metatable fetched with lua_getuserdatametatable
-LUA_API void* lua_newuserdatadtor(lua_State* L, size_t sz, void (*dtor)(void*));
+// Fork-owned: `lua_newuserdatadtor` takes the two-argument `lua_Destructor`
+// (state + data) that mlua's Luau bindings pass; upstream master keeps a
+// one-argument function pointer here. `lua_Destructor` is declared later in
+// this header, so the typedef is given first.
+typedef void (*lua_Destructor)(lua_State* L, void* userdata);
+LUA_API void* lua_newuserdatadtor(lua_State* L, size_t sz, lua_Destructor dtor);
 
 LUA_API void* lua_newbuffer(lua_State* L, size_t sz);
 
@@ -350,6 +355,11 @@ LUA_API int64_t lua_allocationrate(lua_State* L);
 */
 
 LUA_API l_noret lua_errorL(lua_State* L);
+
+// Fork-owned: the link-time `lua_error` symbol mlua's Luau bindings expect.
+// Source callers use the macro below; this declaration keeps the symbol
+// `extern "C"` under `LUAU_EXTERN_C` so the Rust host can link it.
+LUA_API l_noret lua_error(lua_State* L);
 
 LUA_API int lua_next(lua_State* L, int idx);
 LUA_API int lua_rawiter(lua_State* L, int idx, int iter);
@@ -530,6 +540,12 @@ LUA_API int lua_unref(lua_State* L, int ref);
 
 #define lua_pushfstring(L, fmt, ...) lua_pushfstringL(L, fmt, ##__VA_ARGS__)
 #define lua_error(L) (lua_errorL(L), 0)
+
+// Fork-owned: whether the VM is currently executing the outermost Lua frame
+// (the chunk's own code, not a called function). The interrupt callback uses
+// this to avoid raising inside a nested call frame, where `lua_error`'s longjmp
+// past the frame unwind corrupts the stack.
+LUA_API int lua_vm_is_topframe(lua_State* L);
 
 /*
 ** {======================================================================

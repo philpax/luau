@@ -47,7 +47,15 @@
 
 // Can be used to reconfigure visibility/exports for public APIs
 #ifndef LUA_API
+// Fork-owned: `LUA_API` is `extern "C"` under C++ even when the `LUAU_EXTERN_C`
+// CMake flag is not applied, because LÖVR strips that compile definition from
+// the Luau targets and the shared `liblovr.so` still has to expose the Lua C
+// API to the Rust host under C linkage. C compilers see plain `extern`.
+#ifdef __cplusplus
+#define LUA_API extern "C"
+#else
 #define LUA_API extern
+#endif
 #endif
 
 #define LUALIB_API LUA_API
@@ -78,7 +86,13 @@
 
 // LUAI_MAXCSTACK limits the number of Lua stack slots that a C function can use
 #ifndef LUAI_MAXCSTACK
-#define LUAI_MAXCSTACK 8000
+// Fork-owned: 1,000,000 rather than upstream's 8,000, so that the pseudo-index
+// constants (`LUA_REGISTRYINDEX` = `-LUAI_MAXCSTACK - 2000`) match what mlua's
+// Luau bindings were compiled with (mlua-sys builds its vendored Luau with
+// `set_max_cstack_size(1000000)`, and its compat layer bakes those constants
+// in). The fork VM and mlua must agree on the value or pseudo-index access
+// through mlua's compat lands on a different registry index.
+#define LUAI_MAXCSTACK 1000000
 #endif
 
 // LUAI_MAXCALLS limits the number of nested calls
