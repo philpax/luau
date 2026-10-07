@@ -3014,14 +3014,15 @@ bool ConstraintSolver::tryDispatch(const PushFunctionTypeConstraint& c, NotNull<
     // `FunctionCheckConstraint`, but that constraint currently does a few
     // different things.
 
-    auto expectedFn = get<FunctionType>(follow(c.expectedFunctionType));
+    TypeId expectedFunctionType = stripNil(builtinTypes, *arena, c.expectedFunctionType);
+    auto expectedFn = get<FunctionType>(expectedFunctionType);
     auto fn = get<FunctionType>(follow(c.functionType));
 
     // If either the expected type or given type aren't functions, then bail.
     if (!expectedFn || !fn)
         return true;
 
-    if (auto instantiated = instantiate(builtinTypes, arena, NotNull{&limits}, constraint->scope, c.expectedFunctionType))
+    if (auto instantiated = instantiate(builtinTypes, arena, NotNull{&limits}, constraint->scope, expectedFunctionType))
     {
         expectedFn = get<FunctionType>(*instantiated);
         // If we had a function type before, we better have a function type after.

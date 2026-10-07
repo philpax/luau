@@ -27,6 +27,210 @@ LUAU_FASTFLAG(LuauHigherOrderGenericInference)
 
 TEST_SUITE_BEGIN("TypeInferFunctions");
 
+TEST_CASE_FIXTURE(Fixture, "optional_function_statement_configuration")
+{
+    loadDefinition(R"(
+        type Config = {
+            backend: "auto" | "openvr",
+            window: { width: number, title: string? }?,
+        }
+        declare lovr: { conf: ((Config) -> ())? }
+    )");
+
+    std::string body;
+    size_t expectedErrors = 0;
+    SUBCASE("auto")
+    {
+        body = "t.backend = 'auto'";
+    }
+    SUBCASE("openvr")
+    {
+        body = "t.backend = 'openvr'";
+    }
+    SUBCASE("invalid_backend")
+    {
+        body = "t.backend = 'invalid'";
+        expectedErrors = 1;
+    }
+    SUBCASE("optional_window")
+    {
+        body = R"(
+            local window = t.window
+            if window then
+                window.width = 1280
+                window.title = nil
+            end
+            t.window = nil
+        )";
+    }
+    SUBCASE("invalid_window_width")
+    {
+        body = R"(
+            if t.window then
+                t.window.width = 'invalid'
+            end
+        )";
+        expectedErrors = 1;
+    }
+
+    CheckResult result = check("function lovr.conf(t) " + body + R"(
+        end
+        local function readCallback()
+            return lovr.conf
+        end
+        local callback = readCallback()
+        lovr.conf = nil
+    )");
+
+    LUAU_REQUIRE_ERROR_COUNT(expectedErrors, result);
+    CHECK(isOptional(requireType("callback")));
+}
+
+TEST_CASE_FIXTURE(Fixture, "optional_function_statement_local_configuration")
+{
+    ScopedFastFlag crashOnForce{FFlag::DebugLuauAssertOnForcedConstraint, !FFlag::DebugLuauForceOldSolver};
+    std::string callbackType = "((Config) -> ())?";
+    SUBCASE("direct_optional") {}
+    SUBCASE("direct_function")
+    {
+        callbackType = "(Config) -> ()";
+    }
+    SUBCASE("aliased_optional")
+    {
+        callbackType = "Callback";
+    }
+
+    CheckResult result = check(R"(
+        type Config = { headset: { backend: 'auto' | 'openxr' | 'openvr' } }
+        type Callback = ((Config) -> ())?
+        local api: { conf: )" + callbackType + " } = " +
+        (callbackType == "(Config) -> ()" ? "{ conf = function(t: Config) end }" : "{}") + R"(
+        function api.conf(t)
+            t.headset.backend = 'auto'
+            t.headset.backend = 'openxr'
+            t.headset.backend = 'openvr'
+        end
+        local function readCallback()
+            return api.conf
+        end
+        local callback = readCallback()
+    )" + (callbackType == "(Config) -> ()" ? "" : "api.conf = nil"));
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK(toString(requireTypeAtPosition({5, 12})) == "Config");
+    CHECK(isOptional(requireType("callback")) == (callbackType != "(Config) -> ()"));
+}
+
+TEST_CASE_FIXTURE(Fixture, "optional_function_statement_annotations")
+{
+    loadDefinition(R"(
+        type Config = { headset: { backend: 'auto' | 'openxr' | 'openvr' } }
+        declare api: { conf: ((Config) -> number)? }
+    )");
+
+    std::string implementation;
+    SUBCASE("missing_field")
+    {
+        implementation = "function api.conf(t) t.missing = true return 1 end";
+    }
+    SUBCASE("explicit_parameter")
+    {
+        implementation = "function api.conf(t: string) local value: number = t return 1 end";
+    }
+    SUBCASE("explicit_return")
+    {
+        implementation = "function api.conf(t): string return 1 end";
+    }
+    SUBCASE("inferred_return")
+    {
+        implementation = "function api.conf(t) return 'invalid' end";
+    }
+
+    LUAU_REQUIRE_ERRORS(check(implementation));
+}
+
+TEST_CASE_FIXTURE(Fixture, "optional_function_statement_method")
+{
+    ScopedFastFlag crashOnForce{FFlag::DebugLuauAssertOnForcedConstraint, !FFlag::DebugLuauForceOldSolver};
+    loadDefinition(R"(
+        type Config = { headset: { backend: 'auto' | 'openxr' | 'openvr' } }
+        type Api = { conf: ((Api, Config) -> ())? }
+        declare api: Api
+    )");
+
+    CheckResult result = check(R"(
+        function api:conf(t)
+            t.headset.backend = 'openvr'
+            local receiver = self
+        end
+        api.conf = nil
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    CHECK(toString(requireTypeAtPosition({2, 12})) == "Config");
+    CHECK(toString(requireTypeAtPosition({3, 29})) == "Api");
+}
+
+TEST_CASE_FIXTURE(Fixture, "optional_function_statement_intersection")
+{
+    loadDefinition(R"(
+        declare callbacks: { run: (((number) -> ()) & ((string) -> ()))? }
+    )");
+
+    CheckResult result = check(R"(
+        function callbacks.run(value)
+            local inferred = value
+        end
+    )");
+
+    if (FFlag::DebugLuauForceOldSolver)
+        LUAU_REQUIRE_ERRORS(result);
+    else
+    {
+        LUAU_REQUIRE_NO_ERRORS(result);
+        CHECK(toString(requireTypeAtPosition({2, 29})) == "unknown");
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "optional_function_statement_ambiguous_union")
+{
+    loadDefinition(R"(
+        declare callbacks: { run: (((number) -> ()) | ((string) -> ()))? }
+    )");
+
+    CheckResult result = check(R"(
+        function callbacks.run(value)
+            local inferred = value
+        end
+    )");
+
+    LUAU_REQUIRE_NO_ERRORS(result);
+    if (FFlag::DebugLuauForceOldSolver)
+        CHECK(toString(requireTypeAtPosition({2, 29})) == "number");
+    else
+    {
+        CHECK(toString(requireTypeAtPosition({2, 29})) == "unknown");
+    }
+}
+
+TEST_CASE_FIXTURE(Fixture, "optional_function_statement_nonfunction_union")
+{
+    loadDefinition(R"(
+        declare callbacks: { run: (((number) -> ()) | string)? }
+    )");
+
+    CheckResult result = check(R"(
+        function callbacks.run(value)
+            local stringValue: string = value
+        end
+    )");
+
+    if (FFlag::DebugLuauForceOldSolver)
+        LUAU_REQUIRE_ERRORS(result);
+    else
+        LUAU_REQUIRE_NO_ERRORS(result);
+}
+
 TEST_CASE_FIXTURE(Fixture, "general_case_table_literal_blocks")
 {
     CheckResult result = check(R"(
