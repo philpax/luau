@@ -354,7 +354,15 @@ typedef struct LuauVector
 
 enum FeedbackVectorSlotKind
 {
-    CALL_TARGET
+    CALL_TARGET,
+    CONSTRUCT,
+};
+
+enum LuauClassConstructMatch
+{
+    LCM_MISMATCH,
+    LCM_MATCH,
+    LCM_MATCH_ZEROED,
 };
 
 struct FeedbackVectorSlot
@@ -369,6 +377,13 @@ struct FeedbackVectorSlot
             uint32_t proto;
             uint32_t hits;
         } call_target;
+
+        struct
+        {
+            uint32_t shape;
+            uint32_t classid;
+            LuauClassConstructMatch match;
+        } construct;
     };
 };
 
@@ -488,7 +503,6 @@ typedef struct Closure
         {
             lua_CFunction f;
             lua_Continuation cont;
-            const char* debugname_DEPRECATED;
             TString* debugname;
             TValue upvals[1];
         } c;
@@ -550,7 +564,7 @@ typedef struct LuaTable
     CommonHeader;
 
     uint8_t tmcache;    // 1<<p means tagmethod(p) is not present
-    uint8_t readonly;   // sandboxing feature to prohibit writes to table
+    uint8_t readonly;   // bit 0 - prohibit writes to table, bit 1 - array contains a metamethod cache
     uint8_t safeenv;    // environment doesn't share globals with other scripts
     uint8_t lsizenode;  // log2 of size of `node' array
     uint8_t nodemask8;  // (1<<lsizenode)-1, truncated to 8 bits
@@ -577,6 +591,12 @@ typedef struct LuauClass
 
     TString* name;
 
+    // Used to match feedback vector construction slots
+    uint32_t id;
+
+    // The superclass of this class. NULL if this class doesn't inherit.
+    LuauClass* super;
+
     // Mapping from offset to static members (only methods for now).
     TValue* staticmembers;
 
@@ -587,8 +607,7 @@ typedef struct LuauClass
     // Mapping from offset to member name. Instance member offsets are stored before static member offsets.
     TString** offsettomember;
 
-    // Metatable for this *class object*. At time of writing this only contains
-    // __call, but we may add more metamethods to class objects in the future.
+    // Metatable for this *class object*. At time of writing this only contains __call
     LuaTable* metatable;
 
     // Metatable for instances of this class. NULL until the first metamethod
@@ -609,6 +628,14 @@ typedef struct LuauClass
     // instance or static members, creating class instances).
     uint32_t numberofallmembers;
 
+    // Can this class be extended?
+    bool isopen;
+
+    // True if this class or any of its ancestors defines an __init method.
+    // If a class's ancestors define an __init method, it must itself also define an __init method.
+    // We cannot determine this statically, so we track it here to error at runtime if the invariant is violated.
+    // The default constructor errors if this is true, which works because the default constructor is overridden if a class defines an __init method.
+    bool hasuserinitinchain;
 } LuauClass;
 
 typedef struct LuauObject
@@ -637,6 +664,8 @@ typedef struct LuauObject
 
 #define twoto(x) ((int)(1 << (x)))
 #define sizenode(t) (twoto((t)->lsizenode))
+#define hasmetacache(t) (((t)->readonly & 2) != 0)
+#define getmetacache(t, event) ((t)->array - (1 + (event)))
 
 #define luaO_nilobject (&luaO_nilobject_)
 

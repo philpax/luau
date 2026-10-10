@@ -10,7 +10,6 @@
 #include "Type.h"
 
 LUAU_FASTINT(LuauVisitRecursionLimit)
-LUAU_FASTFLAG(LuauRemovePrimitiveTypeConstraintAndSubtypingUnifier)
 
 namespace Luau
 {
@@ -259,11 +258,8 @@ struct GenericTypeVisitor
                 traverse(ftv->lowerBound);
                 traverse(ftv->upperBound);
 
-                if (FFlag::LuauRemovePrimitiveTypeConstraintAndSubtypingUnifier)
-                {
-                    if (ftv->primitiveType)
-                        traverse(*ftv->primitiveType);
-                }
+                if (ftv->primitiveType)
+                    traverse(*ftv->primitiveType);
             }
         }
         else if (auto gtv = get<GenericType>(ty))
@@ -529,7 +525,7 @@ struct TypeVisitor : GenericTypeVisitor<std::unordered_set<void*>>
 struct TypeOnceVisitor : GenericTypeVisitor<DenseHashSet<void*>>
 {
     explicit TypeOnceVisitor(const std::string visitorName, bool skipBoundTypes)
-        : GenericTypeVisitor{visitorName, DenseHashSet<void*>{nullptr}, skipBoundTypes}
+        : GenericTypeVisitor{visitorName, DenseHashSet<void*>{}, skipBoundTypes}
     {
     }
 };

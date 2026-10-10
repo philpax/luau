@@ -51,19 +51,25 @@ class Point
 
 end
 
+expectpass("access_with_brackets", function() 
+    local p1 = Point { x = 1, y = 2 }
+    assert(p1["x"] == 1)
+    assert(p1["y"] == 2)
+end)
+
 class NotAPoint
     public x
 end
 
 expectpass("class_first_arg_is_instance", function()
-    local p1 = Point({ x = 1, y = 2})
-    local p2 = Point({ x = 0, y = 0})
+    local p1 = Point { x = 1, y = 2 }
+    local p2 = Point { x = 0, y = 0 }
     assert(class.isinstance(p1, Point))
     assert(class.isinstance(p2, Point))
 end)
 
 expectpass("class_first_arg_is_not_instance", function()
-    local notAPoint = NotAPoint({ x = 1})
+    local notAPoint = NotAPoint { x = 1}
     assert(not class.isinstance(notAPoint, Point))
 end)
 
@@ -81,7 +87,7 @@ expectfail("class_second_arg_is_not_classobject", "invalid argument #2 to 'isins
 end)
 
 expectfail("class_second_arg_is_not_classobject", "invalid argument #2 to 'isinstance' (class expected, got string)", function()
-    class.isinstance(Point({x = 1, y = 2}), "not a class")
+    class.isinstance(Point {x = 1, y = 2}, "not a class")
 end)
 
 expectfail("classof raises on missing first argument", "missing argument #1", function()
@@ -115,7 +121,7 @@ end)
 
 expectpass("classof result is usable as the second arg to isinstance", function()
     local p = Point { x = 3, y = 4 }
-    local notAPoint = NotAPoint ({ x = 1 })
+    local notAPoint = NotAPoint { x = 1 }
     -- classof(notAPoint) is NotAPoint, so a Point instance is not an instance of it.
     assert(not class.isinstance(p, class.classof(notAPoint)))
     -- classof(p) is Point, so p is an instance of it.
@@ -142,7 +148,7 @@ expectfail("classobject set method", "attempt to index class with 'zero'", funct
 end)
 
 expectpass("classobject construction", function ()
-    local p = Point({ x = 1, y = 2 })
+    local p = Point { x = 1, y = 2 }
     assert(p.x == 1 and p.y == 2)
 end)
 
@@ -150,13 +156,12 @@ expectfail("classobject bad construction", "attempt to index number with 'x'", f
     local _ = Point(42)
 end)
 
-expectpass("classobject no construction arg", function ()
-    local p = Point()
-    assert(not p.x and not p.y)
+expectfail("classobject no construction arg", "must be called with 2 arguments", function ()
+    Point()
 end)
 
 expectpass("classinstance basics", function()
-    local p = Point({ x = 3, y = 4 })
+    local p = Point { x = 3, y = 4 }
     assert(p.x == 3 and p.y == 4)
     assert(p:magnitude() == 5)
     local pzero = Point.zero()
@@ -169,21 +174,21 @@ expectpass("classinstance basics", function()
 end)
 
 expectpass("classinstance mutable", function ()
-    local p = Point()
+    local p = Point {x=0, y=0}
     p.x = 84
     p.y = 13
     assert(p:magnitude() == 85)
 end)
 
 expectpass("classinstance pcall method", function()
-    local p = Point({ x = 1, y = 2})
+    local p = Point { x = 1, y = 2}
     local success, msg = pcall(Point.asserttriple, p)
     assert(not success, "Expected pcall to fail")
     assert(msg:match("Not a pythagorean triple!"), `Message was: {msg}`)
 end)
 
 expectfail("classinstance assign nonexistent prop", "this object does not have a key named 'huh'", function()
-    local p = Point({ x = 3, y = 4 })
+    local p = Point { x = 3, y = 4 }
     p.huh = "???"
 end)
 
@@ -193,7 +198,7 @@ expectfail("classinstance get nonexistent prop", "this object does not have a ke
 end)
 
 expectfail("classinstance assign method", "attempt to index object with 'zero'", function()
-    local p = Point({ x = 3, y = 4 })
+    local p = Point { x = 3, y = 4 }
     p.zero = "???"
 end)
 
@@ -233,8 +238,7 @@ class Secret
     end
 
     function __concat(lhs, rhs)
-        return Secret {
-            cb = function ()
+        return Secret {cb = function ()
                 return lhs:render() .. rhs:render()
             end
         }
@@ -397,7 +401,7 @@ expectpass("classes gracefully handle NCG", function()
 end)
 
 expectfail("classes cannot be iterated over", "attempt to iterate over a object value", function ()
-    local p = Point { x = 1, y = 2}
+    local p = Point { x = 1, y = 2 }
     for k, v in p do
         -- This should be unreachable!
         print(k, v)
@@ -439,6 +443,31 @@ expectpass("instance survives GC during __index construction", function()
     assert(v.a == 1, `expected a=1, got a={v.a}`)
     assert(v.b == 2, `expected b=2, got b={v.b}`)
     assert(v.c == 3, `expected c=3, got c={v.c}`)
+end)
+
+class GCBarrierTest
+    public a1 public b1 public c1 public d1 public e1
+    public a2 public b2 public c2 public d2 public e2
+    public a3 public b3 public c3 public d3 public e3
+    public a4 public b4 public c4 public d4 public e4
+    public a5 public b5 public c5 public d5 public e5
+end
+
+expectpass("instance properties survive GC during __index construction", function()
+    local poison = setmetatable({}, {
+        __index = function(_, key)
+            return {key, 1, 2, 3}
+        end
+    })
+
+    for iter = 1, 100 do
+        local v = GCBarrierTest(poison)
+        assert(type(v.a1) == "table" and v.a1[1] == "a1")
+        assert(type(v.b2) == "table" and v.b2[1] == "b2")
+        assert(type(v.c3) == "table" and v.c3[1] == "c3")
+        assert(type(v.d4) == "table" and v.d4[1] == "d4")
+        assert(type(v.e5) == "table" and v.e5[1] == "e5")
+    end
 end)
 
 class Cls end
@@ -502,80 +531,123 @@ expectpass("stack reallocation in creation", function()
     assert(f.z == 300)
 end)
 
-expectpass("hoisting: read before declaration is nil", function()
-    assert(typeof(Hoisted) == "nil")
+expectpass("explicitly_invoke_default_constructor", function()
+    local f = Foo {x=0, y=1, z=2}
+    f:__init {x=3, y=2, z=1}
+
+    assert(f.x == 3)
+    assert(f.y == 2)
+    assert(f.z == 1)
 end)
 
-class Hoisted
+class Quaternion
+    public w: number
+    public x: number
+    public y: number
+    public z: number
+
+    function __init(self, w, x, y, z)
+        self.w = w
+        self.x = x
+        self.y = y
+        self.z = z
+    end
+end
+
+expectpass("new_constructor", function()
+    local q = Quaternion(3, 4, 5, 6)
+    assert(q.w == 3)
+    assert(q.x == 4)
+    assert(q.y == 5)
+    assert(q.z == 6)
+end)
+
+expectpass("explicitly_invoke_constructor", function()
+    local q = Quaternion(3, 4, 5, 6)
+    q:__init(0, 0, 0, 0)
+    assert(q.w == 0)
+    assert(q.x == 0)
+    assert(q.y == 0)
+end)
+
+class Empty
     public x
-end
-
-expectpass("hoisting: read after declaration is class", function()
-    assert(typeof(Hoisted) == "class")
-    local h = Hoisted({ x = 1 })
-    assert(h.x == 1)
-end)
-
-class Parent
-    public children: {Child}
-
-    function createChild(self)
-        local child = Child({parent = self}) -- forward reference to Child
-        table.insert(self.children, child)
-        return child
+    function __init(self)
+        self.x = 42
     end
 end
 
-class Child
-    public parent: Parent
+expectpass("constructor_no_args", function()
+    local e = Empty()
+    assert(e.x == 42)
+end)
 
-    function createParent(self)
-        local p = Parent({children = {self}})
-        return p
+class Partial
+    public a
+    public b
+    function __init(self, a)
+        self.a = a
     end
 end
 
-expectpass("hoisting: mutually referential classes work via capture by ref", function()
-    local p = Parent({children = {}})
-    local c = p:createChild()
-    assert(class.isinstance(c, Child))
-    assert(c.parent == p)
-    assert(#p.children == 1)
-    assert(p.children[1] == c)
-
-    local p2 = c:createParent()
-    assert(class.isinstance(p2, Parent))
+expectpass("constructor_partial_init", function()
+    local p = Partial(10)
+    assert(p.a == 10)
+    assert(p.b == nil)
 end)
 
-local function makeWidget(id)
-    return Widget({ id = id }) -- forward reference to Widget
+class ReturnsValue
+    public x
+    function __init(self)
+        self.x = 1
+        return 999
+    end
 end
 
-class Widget
-    public id
-end
-
-expectpass("hoisting: function defined before class works via capture by ref", function()
-    local w = makeWidget(42)
-    assert(class.isinstance(w, Widget))
-    assert(w.id == 42)
+expectpass("constructor_return_discarded", function()
+    local r = ReturnsValue()
+    assert(r.x == 1)
+    assert(r:__init() == 999)
 end)
 
-class Animal
+class Exploding
+    public x
+    function __init(self)
+        error("kaboom")
+    end
+end
+expectfail("constructor_throws", "kaboom", function()
+    Exploding()
+end)
+
+class Variadic
+    public sum
+    function __init(self, ...)
+        local s = 0
+        for _, v in {...} do s += v end
+        self.sum = s
+    end
+end
+expectpass("constructor_varargs", function()
+    local v = Variadic(1, 2, 3, 5)
+    assert(v.sum == 11)
+end)
+
+open class Animal
 	public species: string
-	
+
 	function __tostring(self)
 		return "I am an animal."
 	end
-	
+
 	function live(self)
 		return "I am alive"
 	end
 end
 
-class Cat extends Animal
+open class Cat extends Animal
 	public breed: string
-	
+
 	function __tostring(self): string
 		return `{Animal.__tostring(self)} I am a {self.breed} cat.`
 	end
@@ -605,11 +677,23 @@ end)
 class EmptyAnimal extends Animal
 end
 
-expectpass("class inheritance empty child", function() 
+expectpass("class inheritance empty child", function()
     local ea = EmptyAnimal { species = "Unknown" }
     assert(ea.species == "Unknown")
     assert(ea:live() == "I am alive")
     assert(tostring(ea) == "I am an animal.")
+end)
+
+expectpass("class inheritance isinstance with parent class", function()
+    local c = Cat { species = "Felis catus", breed = "Siamese" }
+    assert(class.isinstance(c, Cat))
+    assert(class.isinstance(c, Animal))
+end)
+
+expectpass("class inheritance isinstance parent is not child", function()
+    local a = Animal { species = "Canis lupus" }
+    assert(class.isinstance(a, Animal))
+    assert(not class.isinstance(a, Cat))
 end)
 
 expectpass("class inheritance static method accessible on child", function()
@@ -636,6 +720,19 @@ expectpass("class inheritance multi-level (grandchild)", function()
     assert(tostring(k) == "I am an animal. I am a Persian cat. My name is Whiskers.")
 end)
 
+class Dog extends Animal
+end
+
+expectpass("class inheritance multi-level isinstance", function()
+    local k = Kitten { species = "Felis catus", breed = "Persian", name = "Whiskers" }
+    assert(class.isinstance(k, Kitten))
+    assert(class.isinstance(k, Cat))
+    assert(class.isinstance(k, Animal))
+    assert(not class.isinstance(k, Dog))
+    local c = Cat { species = "Felis catus", breed = "Tabby" }
+    assert(not class.isinstance(c, Kitten))
+end)
+
 expectpass("class inheritance multi-level classof", function()
     local k = Kitten { species = "Felis catus", breed = "Persian", name = "Whiskers" }
     assert(class.classof(k) == Kitten)
@@ -643,7 +740,7 @@ expectpass("class inheritance multi-level classof", function()
     assert(class.classof(k) ~= Animal)
 end)
 
-class Vehicle
+open class Vehicle
     public speed: number
 
     function __add(self, other)
@@ -705,7 +802,7 @@ expectpass("class inheritance method override", function()
     assert(c:describe() == "I am a car.")
 end)
 
-class Shape
+open class Shape
     public sides: number
 
     function perimeter(self)
@@ -732,7 +829,7 @@ expectpass("class inheritance virtual dispatch via self", function()
     assert(rp:perimeter() == 30)
 end)
 
-class IterParent
+open class IterParent
     function __iter(self)
         return next, {10, 20, 30}
     end
@@ -752,7 +849,7 @@ expectpass("class inheritance __iter inherited", function()
     assert(ic.tag == "test")
 end)
 
-class EqParent
+open class EqParent
     public val: number
 
     function __eq(self, other)
@@ -764,12 +861,47 @@ class EqChild extends EqParent
     public label: string
 end
 
+class EqUnrelated
+    public val: number
+
+    function __eq(self, other)
+        return self.val == other.val
+    end
+end
+
+class EqUnrelatedWithMetamethod
+    public val: number
+
+    function __eq(self, other)
+        return self.val == other.val
+    end
+end
+
 expectpass("class inheritance __eq inherited", function()
     local a = EqChild { val = 42, label = "a" }
     local b = EqChild { val = 42, label = "b" }
     local c = EqChild { val = 99, label = "a" }
+    local d = EqParent { val = 42 }
+    local e = EqUnrelated { val = 42 }
+    local f = EqUnrelatedWithMetamethod { val = 42 }
     assert(a == b)
+    assert(b == a)
     assert(a ~= c)
+    assert(c ~= a)
+    assert(a == d)
+    assert(b == a)
+
+    -- We want to assert that b and d are not equal to any of e and f, and that
+    -- e and f are themselves not equal.
+    local function checkTwice(left, right)
+        assert(left ~= right)
+        assert(right ~= left)
+    end
+    checkTwice(d, e)
+    checkTwice(b, e)
+    checkTwice(d, f)
+    checkTwice(b, f)
+    checkTwice(e, f)
 end)
 
 expectpass("class inheritance GC stress", function()
@@ -797,6 +929,43 @@ expectpass("class inheritance GC stress multi-level", function()
     local k = Kitten { species = "post-gc", breed = "test", name = "survivor" }
     assert(k.name == "survivor")
     assert(tostring(k) == "I am an animal. I am a test cat. My name is survivor.")
+end)
+
+open class ParentDefinesAConstructor
+    function __init(self)
+    end
+end
+
+open class ChildDoesntDefineAConstructor extends ParentDefinesAConstructor
+end
+
+class GrandChildDoesntDefineAConstructorEither extends ChildDoesntDefineAConstructor
+end
+
+expectfail("A class must define a constructor if its base class defines one.", "must define a constructor", function()
+    ChildDoesntDefineAConstructor()
+end)
+
+expectfail("A class must define a constructor if its base class defines one.", "must define a constructor", function()
+    GrandChildDoesntDefineAConstructorEither()
+end)
+
+class ChildDefinesAConstructor extends ParentDefinesAConstructor
+    function __init(self)
+    end
+end
+
+expectpass("A class must define a constructor if its base class defines one.", function()
+    ChildDefinesAConstructor()
+end)
+
+class GrandChildDefinesAConstructor extends ChildDoesntDefineAConstructor
+    function __init(self)
+    end
+end
+
+expectpass("A class must define a constructor if any ancestor defines one.", function()
+    GrandChildDefinesAConstructor()
 end)
 
 return 'OK'

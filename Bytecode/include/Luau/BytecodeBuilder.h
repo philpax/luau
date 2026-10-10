@@ -10,6 +10,18 @@
 namespace Luau
 {
 
+static const uint32_t kMaxRegisterCount = 255;
+static const uint32_t kMaxUpvalueCount = 200;
+static const uint32_t kMaxLocalCount = 200;
+static const uint32_t kMaxInstructionCount = 1'000'000'000;
+
+static const uint8_t kInvalidReg = 255;
+
+static const uint32_t kMaxConstantCount = 1 << 23;
+static const uint32_t kMaxClosureCount = 1 << 15;
+
+static const int kMaxJumpDistance = 1 << 23;
+
 class BytecodeEncoder
 {
 public:
@@ -74,7 +86,10 @@ public:
     int32_t addConstantTable(const TableShape& shape);
     int32_t addConstantClosure(uint32_t fid);
 
-    uint32_t addFbSlot(LuauFeedbackType t);
+    uint32_t addFbSlot_DEPRECATED(LuauFeedbackType t);
+    uint32_t addFbSlot_DEPRECATED(LuauFeedbackType t, uint32_t pc);
+    uint32_t addCallTargetSlot(uint32_t pc);
+    uint32_t addConstructSlot(uint32_t shapecid);
 
     int16_t addChildFunction(uint32_t fid);
     int32_t addClassShape(ClassShape shape);
@@ -85,6 +100,7 @@ public:
     void emitAux(uint32_t aux);
 
     void undoEmit(LuauOpcode op);
+    unsigned lastInstruction();
 
     size_t emitLabel();
 
@@ -94,7 +110,7 @@ public:
     void patchAux(size_t targetAux, int32_t newValue);
 
     void foldJumps();
-    std::vector<uint32_t> expandJumps();
+    std::vector<uint32_t> expandJumps(bool& hasLongJumpError);
 
     void setFunctionTypeInfo(std::string value);
     void pushLocalTypeInfo(LuauBytecodeType type, uint8_t reg, uint32_t startpc, uint32_t endpc);
@@ -166,8 +182,9 @@ public:
 
     void annotateInstruction(std::string& result, uint32_t fid, uint32_t instpos) const;
 
-    void clearStringTable()
+    void clearStrings()
     {
+        debugStrings.clear();
         stringTable.clear();
     }
 
@@ -326,7 +343,26 @@ protected:
     std::vector<TableShape> tableShapes;
     std::vector<ClassShape> classShapes;
 
-    std::vector<uint32_t> fbSlots;
+    struct FeedbackSlot
+    {
+        LuauFeedbackType kind;
+
+        union
+        {
+            struct
+            {
+                uint32_t pc;
+            } callTarget;
+
+            struct
+            {
+                uint32_t shape;
+            } construct;
+        };
+    };
+
+    std::vector<FeedbackSlot> fbSlots;
+    std::vector<uint32_t> fbSlots_DEPRECATED;
 
     bool hasLongJumps = false;
 
@@ -364,6 +400,7 @@ protected:
     void validate() const;
     void validateInstructions() const;
     void validateVariadic() const;
+    void validateCaptures() const;
     virtual void validateConst(int32_t cid) const;
     virtual void validateConst(int32_t cid, Constant::Type constType) const;
     virtual uint8_t validateProto(int32_t pid) const;
