@@ -695,13 +695,14 @@ end
 do
   local ok, res = pcall(function()
     local a = table.create(7999, 0)
-    local b = table.create(8000, 0)
-
     local at = { table.unpack(a) }
-    local bt = { table.unpack(b) }
+    assert(#at == 7999)
+
+    -- An explicit range reaches the stack limit without allocating a large table.
+    local bt = { table.unpack(a, 1, maxcstack + 1) }
   end)
 
-  assert(not ok)
+  assert(not ok and string.find(res, "too many results to unpack", 1, true))
 end
 
 -- test iteration with lightuserdata keys

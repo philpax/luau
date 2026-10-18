@@ -274,8 +274,8 @@ _X()
 if not limitedstack then
   -- bug (stack overflow)
   local j = 2^9
-  local lim = 1000000    -- (C stack limit; assume 32-bit machine)
-  local t = {lim - 10, lim - 5, lim - 1, lim, lim + 1}
+  local lim = maxcstack
+  local t = {lim + 1, lim + 2, lim + 5, lim + 10, lim + 100}
   for i = 1, #t do
     local j = t[i]
     co = coroutine.create(function()

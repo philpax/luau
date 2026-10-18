@@ -6,6 +6,7 @@
 #include "luacode.h"
 #include "luacodegen.h"
 #include "luajitinliner.h"
+#include "../VM/src/lobject.h"
 
 #include "Luau/BuiltinDefinitions.h"
 #include "Luau/DenseHash.h"
@@ -1355,6 +1356,8 @@ TEST_CASE("Tables")
         "tables.luau",
         [](lua_State* L)
         {
+            lua_pushinteger(L, LUAI_MAXCSTACK);
+            lua_setglobal(L, "maxcstack");
             luaL_pushcfunction(
                 L,
                 [](lua_State* L)
@@ -1635,7 +1638,10 @@ TEST_CASE("Coroutine")
 {
     ScopedFastFlag luauCoroutineFinally{FFlag::LuauCoroutineFinally, true};
 
-    runConformance("coroutine.luau");
+    runConformance("coroutine.luau", [](lua_State* L) {
+        lua_pushinteger(L, LUAI_MAXCSTACK);
+        lua_setglobal(L, "maxcstack");
+    });
 }
 
 static int runFinalizers(lua_State* L, bool toclose)
@@ -2946,7 +2952,11 @@ TEST_CASE("ApiCalls")
 
         CHECK(lua_gettop(L) == 0);
 
+        unsigned oldReallocSizeLimit = reallocSizeLimit;
+        // Stack growth may exceed the allocator's default cap with a larger configured C stack.
+        reallocSizeLimit = unsigned((LUAI_MAXCSTACK + LUA_MINSTACK) * sizeof(TValue) * 2);
         luaL_checkstack(L, LUAI_MAXCSTACK - 1, "must succeed");
+        reallocSizeLimit = oldReallocSizeLimit;
 
         for (int i = 0; i < LUAI_MAXCSTACK - 1; i++)
             lua_pushnumber(L, 1.0);
