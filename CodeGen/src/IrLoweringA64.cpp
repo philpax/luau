@@ -2351,6 +2351,18 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
 
         emitUpdateBase(build);
         break;
+    case IrCmd::GET_IMPORT:
+        regs.spill(index);
+
+        build.mov(x0, rState);
+        build.add(x1, rBase, uint16_t(vmRegOp(OP_A(inst)) * sizeof(TValue)));
+        build.mov(w2, importOp(OP_B(inst)));
+        build.mov(w3, uintOp(OP_C(inst)));
+        build.ldr(x4, mem(rNativeContext, offsetof(NativeContext, getImport)));
+        build.blr(x4);
+
+        emitUpdateBase(build);
+        break;
     case IrCmd::GET_CACHED_IMPORT:
     {
         regs.spill(index);

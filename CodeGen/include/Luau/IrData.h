@@ -633,6 +633,12 @@ enum class IrCmd : uint8_t
     // D: unsigned int (pcpos)
     GET_CACHED_IMPORT,
 
+    // Resolve an import from the current environment without using its cached constant.
+    // A: Rn (destination).
+    // B: unsigned int (import path).
+    // C: unsigned int (pcpos).
+    GET_IMPORT,
+
     // Concatenate multiple TValues into a string
     // A: Rn (value start)
     // B: unsigned int (number of registers to go over)

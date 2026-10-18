@@ -2098,6 +2098,42 @@ TEST_CASE("Vector")
     );
 }
 
+#if (defined(__x86_64__) || defined(_M_X64) || defined(__aarch64__) || defined(_M_ARM64)) && LUA_VECTOR_SIZE == 4 && !LUA_VECTOR_DOUBLE
+TEST_CASE("Vector4Native")
+{
+    if (!codegen)
+        return;
+
+    REQUIRE(luau_codegen_supported());
+
+    lua_CompileOptions copts = defaultOptions();
+
+    SUBCASE("O0")
+    {
+        copts.optimizationLevel = 0;
+    }
+    SUBCASE("O1")
+    {
+        copts.optimizationLevel = 1;
+    }
+    SUBCASE("O2")
+    {
+        copts.optimizationLevel = 2;
+    }
+
+    runConformance(
+        "vector4native.luau",
+        [](lua_State* L)
+        {
+            setupNativeHelpers(L);
+        },
+        nullptr,
+        nullptr,
+        &copts
+    );
+}
+#endif
+
 TEST_CASE("VectorLibrary")
 {
     ScopedFastFlag luauCompileEmitVectorDouble{FFlag::LuauCompileEmitVectorDouble, true};
@@ -4760,6 +4796,52 @@ TEST_CASE("Native")
         [](lua_State* L)
         {
             setupNativeHelpers(L);
+        },
+        nullptr,
+        nullptr,
+        &copts
+    );
+}
+
+TEST_CASE("NativeUnsafeEnvFastcall")
+{
+    lua_CompileOptions copts = defaultOptions();
+
+    SUBCASE("O1")
+    {
+        copts.optimizationLevel = 1;
+    }
+    SUBCASE("O2")
+    {
+        copts.optimizationLevel = 2;
+    }
+
+    runConformance(
+        "native_unsafeenv.luau",
+        [](lua_State* L)
+        {
+            setupNativeHelpers(L);
+            lua_pushcclosurek(
+                L,
+                [](lua_State* L) -> int
+                {
+                    luaL_checktype(L, 1, LUA_TTABLE);
+                    lua_setsafeenv(L, 1, false);
+                    CHECK_FALSE(static_cast<const LuaTable*>(lua_topointer(L, 1))->safeenv);
+                    lua_pushvalue(L, 1);
+                    return 1;
+                },
+                "make_unsafe_env",
+                0,
+                nullptr
+            );
+            lua_setglobal(L, "make_unsafe_env");
+            lua_pushcfunction(L, [](lua_State* L) -> int {
+                luaL_checktype(L, 1, LUA_TTABLE);
+                lua_pushvalue(L, 1);
+                return 1;
+            });
+            lua_setglobal(L, "opaque_functions");
         },
         nullptr,
         nullptr,

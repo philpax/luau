@@ -367,6 +367,8 @@ const char* getCmdName(IrCmd cmd)
         return "SET_TABLE";
     case IrCmd::GET_CACHED_IMPORT:
         return "GET_CACHED_IMPORT";
+    case IrCmd::GET_IMPORT:
+        return "GET_IMPORT";
     case IrCmd::CONCAT:
         return "CONCAT";
     case IrCmd::GET_UPVALUE:

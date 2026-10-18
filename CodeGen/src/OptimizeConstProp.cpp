@@ -3298,6 +3298,10 @@ static void constPropInInst(ConstPropState& state, IrBuilder& build, IrFunction&
     case IrCmd::SET_TABLE:
         state.invalidateUserCall();
         break;
+    case IrCmd::GET_IMPORT:
+        state.invalidate(OP_A(inst));
+        state.invalidateUserCall();
+        break;
     case IrCmd::GET_CACHED_IMPORT:
         state.invalidate(OP_A(inst));
 

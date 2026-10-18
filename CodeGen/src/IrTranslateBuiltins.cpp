@@ -1068,65 +1068,6 @@ static BuiltinImplResult translateBuiltinVectorMagnitude(
     return {BuiltinImplType::Full, 1};
 }
 
-static BuiltinImplResult translateBuiltinVectorNormalize(
-    IrBuilder& build,
-    int nparams,
-    int ra,
-    int arg,
-    IrOp args,
-    IrOp arg3,
-    int nresults,
-    int pcpos
-)
-{
-    IrOp arg1 = build.vmReg(arg);
-
-    if (nparams != 1 || nresults > 1 || arg1.kind == IrOpKind::Constant)
-        return {BuiltinImplType::None, -1};
-
-    build.loadAndCheckTag(arg1, LUA_TVECTOR, build.vmExit(pcpos));
-
-    if constexpr (LUA_VECTOR_DOUBLE == 1)
-    {
-        IrOp aptr = build.inst(IrCmd::LOAD_POINTER, arg1);
-        IrOp ax = build.inst(IrCmd::BUFFER_READF64, aptr, build.constInt(0), build.constTag(LUA_TVECTOR));
-        IrOp ay = build.inst(IrCmd::BUFFER_READF64, aptr, build.constInt(8), build.constTag(LUA_TVECTOR));
-        IrOp az = build.inst(IrCmd::BUFFER_READF64, aptr, build.constInt(16), build.constTag(LUA_TVECTOR));
-
-        IrOp xx = build.inst(IrCmd::MUL_NUM, ax, ax);
-        IrOp yy = build.inst(IrCmd::MUL_NUM, ay, ay);
-        IrOp zz = build.inst(IrCmd::MUL_NUM, az, az);
-        IrOp sum = build.inst(IrCmd::ADD_NUM, xx, build.inst(IrCmd::ADD_NUM, yy, zz));
-
-        IrOp mag = build.inst(IrCmd::SQRT_NUM, sum);
-        IrOp inv = build.inst(IrCmd::DIV_NUM, build.constDouble(1.0), mag);
-
-        IrOp rx = build.inst(IrCmd::MUL_NUM, ax, inv);
-        IrOp ry = build.inst(IrCmd::MUL_NUM, ay, inv);
-        IrOp rz = build.inst(IrCmd::MUL_NUM, az, inv);
-
-        build.inst(IrCmd::STORE_POINTER, build.vmReg(ra), build.inst(IrCmd::NEW_VECTOR, rx, ry, rz));
-        build.inst(IrCmd::STORE_TAG, build.vmReg(ra), build.constTag(LUA_TVECTOR));
-    }
-    else
-    {
-        IrOp a = build.inst(IrCmd::LOAD_TVALUE, arg1, build.constInt(0));
-        IrOp sum = build.inst(IrCmd::DOT_VEC, a, a);
-
-        IrOp mag = build.inst(IrCmd::SQRT_FLOAT, sum);
-        IrOp inv = build.inst(IrCmd::DIV_FLOAT, build.constDouble(1.0f), mag);
-        IrOp invvec = build.inst(IrCmd::FLOAT_TO_VEC, inv);
-
-        IrOp result = build.inst(IrCmd::MUL_VEC, a, invvec);
-
-        result = build.inst(IrCmd::TAG_VECTOR, result);
-
-        build.inst(IrCmd::STORE_TVALUE, build.vmReg(ra), result);
-    }
-
-    return {BuiltinImplType::Full, 1};
-}
-
 static BuiltinImplResult translateBuiltinVectorCross(IrBuilder& build, int nparams, int ra, int arg, IrOp args, IrOp arg3, int nresults, int pcpos)
 {
     IrOp arg1 = build.vmReg(arg);
@@ -2206,7 +2147,8 @@ BuiltinImplResult translateBuiltin(
     case LBF_VECTOR_MAGNITUDE:
         return translateBuiltinVectorMagnitude(build, nparams, ra, arg, args, arg3, nresults, pcpos);
     case LBF_VECTOR_NORMALIZE:
-        return translateBuiltinVectorNormalize(build, nparams, ra, arg, args, arg3, nresults, pcpos);
+        // The VM fastcall handles zero and NaN lengths without producing NaN components.
+        return {BuiltinImplType::None, -1};
     case LBF_VECTOR_CROSS:
         return translateBuiltinVectorCross(build, nparams, ra, arg, args, arg3, nresults, pcpos);
     case LBF_VECTOR_DOT:

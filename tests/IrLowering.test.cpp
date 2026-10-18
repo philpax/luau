@@ -298,6 +298,40 @@ public:
 
 TEST_SUITE_BEGIN("IrLowering");
 
+TEST_CASE_FIXTURE(LoweringFixture, "UnsafeEnvFastcallUsesNativeFallback")
+{
+    assemblyOptions.includeOutlinedCode = true;
+    std::string ir = getCodegenAssembly(R"(
+local function checked(value)
+    assert(value)
+    return math.abs(value)
+end
+)");
+
+    CHECK(ir.find("CHECK_SAFE_ENV bb_") != std::string::npos);
+    CHECK(ir.find("implicit CHECK_SAFE_ENV") == std::string::npos);
+    CHECK(ir.find("CHECK_SAFE_ENV exit(") == std::string::npos);
+    CHECK(ir.find("GET_CACHED_IMPORT") != std::string::npos);
+    CHECK(ir.find("GET_IMPORT") != std::string::npos);
+    CHECK(ir.find("CALL R") != std::string::npos);
+}
+
+TEST_CASE_FIXTURE(LoweringFixture, "UnsafeEnvStandaloneImportUsesNativeFallback")
+{
+    assemblyOptions.includeOutlinedCode = true;
+    std::string ir = getCodegenAssembly(R"(
+local function imported()
+    return external.branch.value
+end
+)");
+
+    CHECK(ir.find("CHECK_SAFE_ENV bb_") != std::string::npos);
+    CHECK(ir.find("implicit CHECK_SAFE_ENV") == std::string::npos);
+    CHECK(ir.find("CHECK_SAFE_ENV exit(") == std::string::npos);
+    CHECK(ir.find("GET_CACHED_IMPORT") != std::string::npos);
+    CHECK(ir.find("GET_IMPORT") != std::string::npos);
+}
+
 TEST_CASE_FIXTURE(LoweringFixture, "VectorReciprocal")
 {
     ensureVectorFloat();
@@ -550,7 +584,7 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %15 = LOAD_TVALUE R0, 0i, tvector
   %16 = LOAD_TVALUE R1, 0i, tvector
   %17 = LOAD_DOUBLE R2
@@ -562,6 +596,8 @@ bb_bytecode_1:
   %23 = SELECT_VEC %22, %16, %19, %20
   %24 = TAG_VECTOR %23
   STORE_TVALUE R3, %24
+  JUMP bb_4
+bb_4:
   INTERRUPT 8u
   RETURN R3, 1i
 )"
@@ -587,15 +623,22 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %11 = LOAD_TVALUE R0, 0i, tvector
   %12 = LOAD_TVALUE R1, 0i, tvector
   %13 = MIN_VEC %12, %11
   %14 = TAG_VECTOR %13
   STORE_TVALUE R2, %14
-  %24 = MAX_VEC %12, %11
-  %25 = TAG_VECTOR %24
-  STORE_TVALUE R3, %25
+  JUMP bb_4
+bb_4:
+  CHECK_SAFE_ENV bb_fallback_7
+  %36 = LOAD_TVALUE R0, 0i, tvector
+  %37 = LOAD_TVALUE R1, 0i, tvector
+  %38 = MAX_VEC %37, %36
+  %39 = TAG_VECTOR %38
+  STORE_TVALUE R3, %39
+  JUMP bb_8
+bb_8:
   INTERRUPT 14u
   RETURN R2, 2i
 )"
@@ -619,17 +662,36 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %7 = LOAD_TVALUE R0, 0i, tvector
   %8 = ABS_VEC %7
   %9 = TAG_VECTOR %8
   STORE_TVALUE R1, %9
-  %16 = FLOOR_VEC %7
-  %17 = TAG_VECTOR %16
-  STORE_TVALUE R2, %17
-  %24 = CEIL_VEC %7
-  %25 = TAG_VECTOR %24
-  STORE_TVALUE R3, %25
+  JUMP bb_linear_15
+bb_linear_15:
+  %68 = FLOOR_VEC %7
+  %69 = TAG_VECTOR %68
+  STORE_TVALUE R2, %69
+  %74 = CEIL_VEC %7
+  %75 = TAG_VECTOR %74
+  STORE_TVALUE R3, %75
+  INTERRUPT 15u
+  RETURN R1, 3i
+bb_4:
+  CHECK_SAFE_ENV bb_fallback_7
+  %27 = LOAD_TVALUE R0, 0i, tvector
+  %28 = FLOOR_VEC %27
+  %29 = TAG_VECTOR %28
+  STORE_TVALUE R2, %29
+  JUMP bb_8
+bb_8:
+  CHECK_SAFE_ENV bb_fallback_11
+  %47 = LOAD_TVALUE R0, 0i, tvector
+  %48 = CEIL_VEC %47
+  %49 = TAG_VECTOR %48
+  STORE_TVALUE R3, %49
+  JUMP bb_12
+bb_12:
   INTERRUPT 15u
   RETURN R1, 3i
 )"
@@ -656,17 +718,67 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %16 = FLOOR_NUM R0
-  %24 = CEIL_NUM R1
-  %34 = ADD_NUM %16, %24
-  %41 = ROUND_NUM R2
-  %51 = ADD_NUM %34, %41
-  %58 = SQRT_NUM R3
-  %68 = ADD_NUM %51, %58
-  %75 = ABS_NUM R4
-  %85 = ADD_NUM %68, %75
-  STORE_DOUBLE R5, %85
+  JUMP bb_linear_23
+bb_linear_23:
+  %152 = CEIL_NUM R1
+  %162 = ADD_NUM %16, %152
+  %167 = ROUND_NUM R2
+  %176 = ADD_NUM %162, %167
+  %181 = SQRT_NUM R3
+  %190 = ADD_NUM %176, %181
+  %195 = ABS_NUM R4
+  %204 = ADD_NUM %190, %195
+  STORE_DOUBLE R5, %204
+  STORE_TAG R5, tnumber
+  INTERRUPT 29u
+  RETURN R5, 1i
+bb_4:
+  CHECK_SAFE_ENV bb_fallback_7
+  %36 = CEIL_NUM R1
+  STORE_DOUBLE R10, %36
+  STORE_TAG R10, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R9, tnumber, exit(10)
+  CHECK_TAG R10, tnumber, exit(10)
+  %56 = LOAD_DOUBLE R9
+  %58 = ADD_NUM %56, R10
+  STORE_DOUBLE R8, %58
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %65 = ROUND_NUM R2
+  STORE_DOUBLE R9, %65
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R8, tnumber, exit(16)
+  CHECK_TAG R9, tnumber, exit(16)
+  %85 = LOAD_DOUBLE R8
+  %87 = ADD_NUM %85, R9
+  STORE_DOUBLE R7, %87
+  STORE_TAG R7, tnumber
+  CHECK_SAFE_ENV bb_fallback_15
+  %94 = SQRT_NUM R3
+  STORE_DOUBLE R8, %94
+  JUMP bb_16
+bb_16:
+  CHECK_TAG R7, tnumber, exit(22)
+  CHECK_TAG R8, tnumber, exit(22)
+  %114 = LOAD_DOUBLE R7
+  %116 = ADD_NUM %114, R8
+  STORE_DOUBLE R6, %116
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_19
+  %123 = ABS_NUM R4
+  STORE_DOUBLE R7, %123
+  JUMP bb_20
+bb_20:
+  CHECK_TAG R6, tnumber, exit(28)
+  CHECK_TAG R7, tnumber, exit(28)
+  %143 = LOAD_DOUBLE R6
+  %145 = ADD_NUM %143, R7
+  STORE_DOUBLE R5, %145
   STORE_TAG R5, tnumber
   INTERRUPT 29u
   RETURN R5, 1i
@@ -695,12 +807,15 @@ bb_bytecode_0:
   CHECK_GC
   JUMP bb_2
 bb_2:
-  implicit CHECK_SAFE_ENV exit(3)
+  CHECK_SAFE_ENV bb_fallback_3
   GET_CACHED_IMPORT R1, K1 (nil), 1073741824u ('_'), 4u
+  JUMP bb_4
+bb_4:
   SET_SAVEDPC 7u
-  %14 = NEW_TABLE 0u, 0u
-  STORE_POINTER R1, %14
+  %17 = NEW_TABLE 0u, 0u
+  STORE_POINTER R1, %17
   STORE_TAG R1, ttable
+  CHECK_GC
   STORE_TAG R0, tnil
   INTERRUPT 9u
   JUMP bb_bytecode_0
@@ -720,9 +835,11 @@ end
         R"(
 ; function foo($arg0) line 2
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_1
   CHECK_TAG R0, tnumber, exit(1)
   FASTCALL 14u, R1, R0, 2i
+  JUMP bb_2
+bb_2:
   INTERRUPT 5u
   RETURN R0, 1i
 )"
@@ -997,11 +1114,19 @@ end
         R"(
 ; function foo($arg0) line 2
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %1 = LOAD_TAG R0
-  %9 = CMP_TAG %1, tnumber, eq
+  %2 = GET_TYPE %1
+  STORE_POINTER R2, %2
+  STORE_TAG R2, tstring
+  JUMP bb_4
+bb_4:
+  %18 = LOAD_TAG R2
+  %19 = LOAD_POINTER R2
+  %20 = LOAD_POINTER K2 ('number')
+  %21 = CMP_SPLIT_TVALUE %18, tstring, %19, %20, eq
   STORE_TAG R1, tboolean
-  STORE_INT R1, %9
+  STORE_INT R1, %21
   JUMP bb_bytecode_2
 bb_bytecode_2:
   INTERRUPT 9u
@@ -1023,10 +1148,18 @@ end
         R"(
 ; function foo($arg0) line 2
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
-  %8 = CMP_TAG R0, tnumber, eq
+  CHECK_SAFE_ENV bb_fallback_3
+  %1 = GET_TYPEOF R0
+  STORE_POINTER R2, %1
+  STORE_TAG R2, tstring
+  JUMP bb_4
+bb_4:
+  %17 = LOAD_TAG R2
+  %18 = LOAD_POINTER R2
+  %19 = LOAD_POINTER K2 ('number')
+  %20 = CMP_SPLIT_TVALUE %17, tstring, %18, %19, eq
   STORE_TAG R1, tboolean
-  STORE_INT R1, %8
+  STORE_INT R1, %20
   JUMP bb_bytecode_2
 bb_bytecode_2:
   INTERRUPT 9u
@@ -1048,12 +1181,18 @@ end
         R"(
 ; function foo($arg0) line 2
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %1 = GET_TYPEOF R0
-  %7 = LOAD_POINTER K2 ('User')
-  %8 = CMP_SPLIT_TVALUE tstring, tstring, %1, %7, eq
+  STORE_POINTER R2, %1
+  STORE_TAG R2, tstring
+  JUMP bb_4
+bb_4:
+  %17 = LOAD_TAG R2
+  %18 = LOAD_POINTER R2
+  %19 = LOAD_POINTER K2 ('User')
+  %20 = CMP_SPLIT_TVALUE %17, tstring, %18, %19, eq
   STORE_TAG R1, tboolean
-  STORE_INT R1, %8
+  STORE_INT R1, %20
   JUMP bb_bytecode_2
 bb_bytecode_2:
   INTERRUPT 9u
@@ -1079,19 +1218,27 @@ end
         R"(
 ; function foo($arg0, $arg1) line 2
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
-  JUMP bb_4
-bb_4:
-  JUMP_EQ_TAG R0, tnumber, bb_3, bb_bytecode_1
+  CHECK_SAFE_ENV bb_fallback_2
+  %1 = LOAD_TAG R0
+  %2 = GET_TYPE %1
+  STORE_POINTER R2, %2
+  STORE_TAG R2, tstring
+  JUMP bb_3
 bb_3:
-  CHECK_TAG R0, tnumber, bb_fallback_5
-  CHECK_TAG R1, tnumber, bb_fallback_5
-  %15 = LOAD_DOUBLE R0
-  %17 = ADD_NUM %15, R1
-  STORE_DOUBLE R2, %17
-  STORE_TAG R2, tnumber
-  JUMP bb_6
+  JUMP_EQ_TAG R2, tstring, bb_7, bb_bytecode_1
+bb_7:
+  %20 = LOAD_POINTER R2
+  %21 = LOAD_POINTER K2 ('number')
+  JUMP_EQ_POINTER %20, %21, bb_6, bb_bytecode_1
 bb_6:
+  CHECK_TAG R0, tnumber, bb_fallback_8
+  CHECK_TAG R1, tnumber, bb_fallback_8
+  %27 = LOAD_DOUBLE R0
+  %29 = ADD_NUM %27, R1
+  STORE_DOUBLE R2, %29
+  STORE_TAG R2, tnumber
+  JUMP bb_9
+bb_9:
   INTERRUPT 8u
   RETURN R2, 1i
 bb_bytecode_1:
@@ -1119,24 +1266,40 @@ end
         R"(
 ; function foo($arg0, $arg1) line 2
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
-  JUMP bb_4
-bb_4:
-  JUMP_EQ_TAG R0, tnumber, bb_3, bb_bytecode_1
+  CHECK_SAFE_ENV bb_fallback_2
+  %1 = LOAD_TAG R0
+  %2 = GET_TYPE %1
+  STORE_POINTER R2, %2
+  STORE_TAG R2, tstring
+  JUMP bb_3
 bb_3:
-  implicit CHECK_SAFE_ENV exit(7)
-  JUMP bb_7
+  JUMP_EQ_TAG R2, tstring, bb_7, bb_bytecode_1
 bb_7:
-  JUMP_EQ_TAG R1, tnumber, bb_6, bb_bytecode_1
+  %20 = LOAD_POINTER R2
+  %21 = LOAD_POINTER K2 ('number')
+  JUMP_EQ_POINTER %20, %21, bb_6, bb_bytecode_1
 bb_6:
-  CHECK_TAG R0, tnumber, bb_fallback_8
-  CHECK_TAG R1, tnumber, bb_fallback_8
-  %26 = LOAD_DOUBLE R0
-  %28 = ADD_NUM %26, R1
-  STORE_DOUBLE R2, %28
-  STORE_TAG R2, tnumber
+  CHECK_SAFE_ENV bb_fallback_8
+  %24 = LOAD_TAG R1
+  %25 = GET_TYPE %24
+  STORE_POINTER R2, %25
+  STORE_TAG R2, tstring
   JUMP bb_9
 bb_9:
+  JUMP_EQ_TAG R2, tstring, bb_13, bb_bytecode_1
+bb_13:
+  %43 = LOAD_POINTER R2
+  %44 = LOAD_POINTER K2 ('number')
+  JUMP_EQ_POINTER %43, %44, bb_12, bb_bytecode_1
+bb_12:
+  CHECK_TAG R0, tnumber, bb_fallback_14
+  CHECK_TAG R1, tnumber, bb_fallback_14
+  %50 = LOAD_DOUBLE R0
+  %52 = ADD_NUM %50, R1
+  STORE_DOUBLE R2, %52
+  STORE_TAG R2, tnumber
+  JUMP bb_15
+bb_15:
   INTERRUPT 15u
   RETURN R2, 1i
 bb_bytecode_1:
@@ -1162,26 +1325,32 @@ end
         R"(
 ; function foo($arg0) line 2
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %1 = LOAD_TAG R0
   %2 = GET_TYPE %1
   STORE_POINTER R3, %2
   STORE_TAG R3, tstring
-  %9 = CMP_TAG %1, tnumber, eq
+  JUMP bb_4
+bb_4:
+  %18 = LOAD_TAG R3
+  %19 = LOAD_POINTER R3
+  %20 = LOAD_POINTER K2 ('number')
+  %21 = CMP_SPLIT_TVALUE %18, tstring, %19, %20, eq
   STORE_TAG R2, tboolean
-  STORE_INT R2, %9
+  STORE_INT R2, %21
   JUMP bb_bytecode_2
 bb_bytecode_2:
-  CHECK_TRUTHY tboolean, %9, exit(10)
-  JUMP bb_5
-bb_5:
-  CHECK_TAG %1, tnumber, bb_fallback_6
-  %30 = LOAD_DOUBLE R0
-  %31 = ADD_NUM %30, %30
-  STORE_DOUBLE R1, %31
+  CHECK_SAFE_ENV bb_fallback_7
+  CHECK_TRUTHY R2, R2, exit(10)
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R0, tnumber, bb_fallback_11
+  %45 = LOAD_DOUBLE R0
+  %46 = ADD_NUM %45, %45
+  STORE_DOUBLE R1, %46
   STORE_TAG R1, tnumber
-  JUMP bb_7
-bb_7:
+  JUMP bb_12
+bb_12:
   INTERRUPT 14u
   RETURN R1, 1i
 )"
@@ -1616,14 +1785,26 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   %6 = LOAD_TVALUE R0, 0i, tvector
   %8 = FLOAT_TO_VEC 2
   %9 = MUL_VEC %6, %8
+  %10 = TAG_VECTOR %9
+  STORE_TVALUE R0, %10
   %14 = EXTRACT_VEC %9, 0i
+  %15 = FLOAT_TO_NUM %14
+  STORE_DOUBLE R2, %15
+  STORE_TAG R2, tnumber
   %20 = EXTRACT_VEC %9, 1i
+  %21 = FLOAT_TO_NUM %20
+  STORE_DOUBLE R3, %21
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, %15
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   STORE_VECTOR R1, %14, %20, %14
   STORE_TAG R1, tvector
+  JUMP bb_4
+bb_4:
   INTERRUPT 11u
   RETURN R1, 1i
 )"
@@ -1650,25 +1831,61 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
-  %9 = LOAD_TVALUE R0, 0i, tvector
-  %10 = DOT_VEC %9, %9
-  %11 = SQRT_FLOAT %10
-  %12 = DIV_FLOAT 1, %11
-  %13 = FLOAT_TO_VEC %12
-  %14 = MUL_VEC %9, %13
-  %21 = LOAD_TVALUE R1, 0i, tvector
-  %22 = DOT_VEC %21, %21
-  %23 = SQRT_FLOAT %22
-  %24 = FLOAT_TO_NUM %23
-  %35 = DOT_VEC %9, %21
-  %36 = FLOAT_TO_NUM %35
-  %46 = ADD_NUM %24, %36
-  %55 = NUM_TO_FLOAT %46
-  %56 = FLOAT_TO_VEC %55
-  %57 = MUL_VEC %14, %56
-  %58 = TAG_VECTOR %57
-  STORE_TVALUE R2, %58
+  CHECK_SAFE_ENV bb_fallback_3
+  SET_SAVEDPC 1u
+  %8 = INVOKE_FASTCALL 79u, R3, R0, undef, undef, 1i, 1i
+  CHECK_FASTCALL_RES %8, bb_fallback_3
+  JUMP bb_linear_15
+bb_linear_15:
+  %93 = LOAD_TVALUE R1, 0i, tvector
+  %94 = DOT_VEC %93, %93
+  %95 = SQRT_FLOAT %94
+  %96 = FLOAT_TO_NUM %95
+  %101 = LOAD_TVALUE R0, 0i, tvector
+  %103 = DOT_VEC %101, %93
+  %104 = FLOAT_TO_NUM %103
+  %114 = ADD_NUM %96, %104
+  CHECK_TAG R3, tvector, bb_exit_16
+   ; exit sync: R6, R5, R4, {%104, %96, %114}
+  %119 = LOAD_TVALUE R3, 0i, tvector
+  %120 = NUM_TO_FLOAT %114
+  %121 = FLOAT_TO_VEC %120
+  %122 = MUL_VEC %119, %121
+  %123 = TAG_VECTOR %122
+  STORE_TVALUE R2, %123
+  INTERRUPT 19u
+  RETURN R2, 1i
+bb_4:
+  CHECK_SAFE_ENV bb_fallback_7
+  %25 = LOAD_TVALUE R1, 0i, tvector
+  %26 = DOT_VEC %25, %25
+  %27 = SQRT_FLOAT %26
+  %28 = FLOAT_TO_NUM %27
+  STORE_DOUBLE R5, %28
+  STORE_TAG R5, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_SAFE_ENV bb_fallback_11
+  %49 = LOAD_TVALUE R0, 0i, tvector
+  %50 = LOAD_TVALUE R1, 0i, tvector
+  %51 = DOT_VEC %49, %50
+  %52 = FLOAT_TO_NUM %51
+  STORE_DOUBLE R6, %52
+  STORE_TAG R6, tnumber
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R5, tnumber, exit(17)
+  CHECK_TAG R6, tnumber, exit(17)
+  %74 = LOAD_DOUBLE R5
+  %76 = ADD_NUM %74, R6
+  CHECK_TAG R3, tvector, bb_exit_17
+   ; exit sync: R4, {%76}
+  %83 = LOAD_TVALUE R3, 0i, tvector
+  %85 = NUM_TO_FLOAT %76
+  %86 = FLOAT_TO_VEC %85
+  %87 = MUL_VEC %83, %86
+  %88 = TAG_VECTOR %87
+  STORE_TVALUE R2, %88
   INTERRUPT 19u
   RETURN R2, 1i
 )"
@@ -1977,16 +2194,21 @@ bb_6:
   STORE_TAG R2, tnumber
   JUMP bb_bytecode_2
 bb_bytecode_2:
-  implicit CHECK_SAFE_ENV exit(2)
   %14 = LOAD_DOUBLE R0
   %16 = SUB_NUM %14, R1
+  STORE_DOUBLE R5, %16
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
   %23 = ABS_NUM %16
   STORE_DOUBLE R4, %23
   STORE_TAG R4, tnumber
-  CHECK_TAG R2, tnumber, bb_fallback_9
-  %32 = LOAD_DOUBLE R2
-  JUMP_CMP_NUM %23, %32, le, bb_bytecode_3, bb_8
+  JUMP bb_8
 bb_8:
+  CHECK_TAG R4, tnumber, bb_fallback_12
+  CHECK_TAG R2, tnumber, bb_fallback_12
+  %42 = LOAD_DOUBLE R2
+  JUMP_CMP_NUM R4, %42, le, bb_bytecode_3, bb_11
+bb_11:
   STORE_INT R3, 0i
   STORE_TAG R3, tboolean
   JUMP bb_bytecode_4
@@ -2857,57 +3079,58 @@ bb_bytecode_1:
   CHECK_SLOT_MATCH %9, K0 ('w'), bb_fallback_3
   %11 = LOAD_TVALUE %9, 0i
   STORE_TVALUE R3, %11
-  JUMP bb_linear_34
-bb_linear_34:
-  %250 = GET_SLOT_NODE_ADDR %8, 2u, K1 ('h')
-  CHECK_SLOT_MATCH %250, K1 ('h'), bb_fallback_5
-  %252 = LOAD_TVALUE %250, 0i
-  STORE_TVALUE R4, %252
-  CHECK_SAFE_ENV exit(4)
+  JUMP bb_linear_43
+bb_linear_43:
+  %284 = GET_SLOT_NODE_ADDR %8, 2u, K1 ('h')
+  CHECK_SLOT_MATCH %284, K1 ('h'), bb_fallback_5
+  %286 = LOAD_TVALUE %284, 0i
+  STORE_TVALUE R4, %286
+  CHECK_SAFE_ENV bb_fallback_7
   CHECK_TAG R3, tnumber, exit(6)
   CHECK_TAG R4, tnumber, exit(6)
-  %260 = LOAD_DOUBLE R3
-  %261 = LOAD_DOUBLE R4
-  %262 = NUM_TO_FLOAT %260
-  %263 = NUM_TO_FLOAT %261
-  STORE_VECTOR R2, %262, %263, 0
+  %294 = LOAD_DOUBLE R3
+  %295 = LOAD_DOUBLE R4
+  %296 = NUM_TO_FLOAT %294
+  %297 = NUM_TO_FLOAT %295
+  STORE_VECTOR R2, %296, %297, 0
   STORE_TAG R2, tvector
-  %266 = LOAD_TVALUE R1, 0i, tvector
-  %267 = LOAD_TVALUE R2, 0i, tvector
-  %268 = MUL_VEC %266, %267
-  %271 = LOAD_TVALUE K5 (0.5, 0.5, 0), 0i, tvector
-  %273 = SUB_VEC %268, %271
-  %276 = FLOOR_VEC %273
-  %279 = CEIL_VEC %273
-  %282 = SUB_VEC %273, %276
-  %283 = TAG_VECTOR %282
-  STORE_TVALUE R4, %283
-  %285 = EXTRACT_VEC %276, 0i
-  %286 = FLOAT_TO_NUM %285
+  %305 = LOAD_TVALUE R1, 0i, tvector
+  %306 = LOAD_TVALUE R2, 0i, tvector
+  %307 = MUL_VEC %305, %306
+  %310 = LOAD_TVALUE K5 (0.5, 0.5, 0), 0i, tvector
+  %312 = SUB_VEC %307, %310
+  %316 = FLOOR_VEC %312
+  %317 = TAG_VECTOR %316
+  %324 = CEIL_VEC %312
+  %334 = SUB_VEC %312, %316
+  %335 = TAG_VECTOR %334
+  STORE_TVALUE R4, %335
+  %337 = EXTRACT_VEC %317, 0i
+  %338 = FLOAT_TO_NUM %337
   STORE_TVALUE R7, %11
-  %299 = MOD_NUM %286, %260
-  STORE_DOUBLE R5, %299
+  %351 = MOD_NUM %338, %294
+  STORE_DOUBLE R5, %351
   STORE_TAG R5, tnumber
-  %303 = EXTRACT_VEC %279, 0i
-  %304 = FLOAT_TO_NUM %303
-  STORE_DOUBLE R7, %304
+  %357 = EXTRACT_VEC %324, 0i
+  %358 = FLOAT_TO_NUM %357
+  STORE_DOUBLE R7, %358
   STORE_TVALUE R8, %11
-  %317 = MOD_NUM %304, %260
-  STORE_SPLIT_TVALUE R6, tnumber, %317
-  %321 = EXTRACT_VEC %276, 1i
-  %322 = FLOAT_TO_NUM %321
-  %335 = MOD_NUM %322, %261
-  STORE_DOUBLE R8, %335
+  %371 = MOD_NUM %358, %294
+  STORE_SPLIT_TVALUE R6, tnumber, %371
+  %375 = EXTRACT_VEC %316, 1i
+  %376 = FLOAT_TO_NUM %375
+  %389 = MOD_NUM %376, %295
+  STORE_DOUBLE R8, %389
   STORE_TVALUE R9, %11
-  %351 = MUL_NUM %335, %260
-  STORE_DOUBLE R7, %351
-  %355 = EXTRACT_VEC %279, 1i
-  %356 = FLOAT_TO_NUM %355
-  STORE_DOUBLE R9, %356
-  %369 = MOD_NUM %356, %261
-  STORE_DOUBLE R8, %369
-  %385 = MUL_NUM %369, %260
-  STORE_SPLIT_TVALUE R8, tnumber, %385
+  %405 = MUL_NUM %389, %294
+  STORE_DOUBLE R7, %405
+  %409 = EXTRACT_VEC %324, 1i
+  %410 = FLOAT_TO_NUM %409
+  STORE_DOUBLE R9, %410
+  %423 = MOD_NUM %410, %295
+  STORE_DOUBLE R8, %423
+  %439 = MUL_NUM %423, %294
+  STORE_SPLIT_TVALUE R8, tnumber, %439
   INTERRUPT 50u
   RETURN R4, 5i
 )"
@@ -3330,28 +3553,35 @@ end
 ; function getsum($arg0, $arg1) line 2
 ; R2: vector from 0 to 18
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
-  CHECK_TAG R0, tnumber, bb_exit_4
-   ; exit sync: R5, R4, {}
+  STORE_DOUBLE R4, 2
+  STORE_TAG R4, tnumber
+  STORE_DOUBLE R5, 3
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_2
+  CHECK_TAG R0, tnumber, exit(4)
   %11 = LOAD_DOUBLE R0
   %14 = NUM_TO_FLOAT %11
   STORE_VECTOR R2, %14, 2, 3
   STORE_TAG R2, tvector
-  JUMP_IF_FALSY R1, bb_bytecode_1, bb_3
+  JUMP bb_3
 bb_3:
-  %23 = LOAD_FLOAT R2, 0i
-  %24 = FLOAT_TO_NUM %23
-  %29 = LOAD_FLOAT R2, 4i
-  %30 = FLOAT_TO_NUM %29
-  %39 = ADD_NUM %24, %30
-  STORE_DOUBLE R3, %39
+  JUMP_IF_FALSY R1, bb_bytecode_1, bb_6
+bb_6:
+  CHECK_TAG R2, tvector, exit(9)
+  %35 = LOAD_FLOAT R2, 0i
+  %36 = FLOAT_TO_NUM %35
+  %41 = LOAD_FLOAT R2, 4i
+  %42 = FLOAT_TO_NUM %41
+  %51 = ADD_NUM %36, %42
+  STORE_DOUBLE R3, %51
   STORE_TAG R3, tnumber
   INTERRUPT 14u
   RETURN R3, 1i
 bb_bytecode_1:
-  %46 = LOAD_FLOAT R2, 8i
-  %47 = FLOAT_TO_NUM %46
-  STORE_DOUBLE R3, %47
+  CHECK_TAG R2, tvector, exit(15)
+  %58 = LOAD_FLOAT R2, 8i
+  %59 = FLOAT_TO_NUM %58
+  STORE_DOUBLE R3, %59
   STORE_TAG R3, tnumber
   INTERRUPT 17u
   RETURN R3, 1i
@@ -3385,37 +3615,42 @@ end
 ; function getsum($arg0, $arg1) line 4
 ; U0: vector
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
-  CHECK_TAG R0, tnumber, bb_exit_4
-   ; exit sync: R5, R4, {}
+  STORE_DOUBLE R4, 2
+  STORE_TAG R4, tnumber
+  STORE_DOUBLE R5, 3
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_2
+  CHECK_TAG R0, tnumber, exit(4)
   %11 = LOAD_DOUBLE R0
   %14 = NUM_TO_FLOAT %11
   STORE_VECTOR R2, %14, 2, 3
   STORE_TAG R2, tvector
-  %20 = LOAD_TVALUE R2, 0i, tvector
-  SET_UPVALUE U0, %20, tvector
-  JUMP_IF_FALSY R1, bb_bytecode_1, bb_3
+  JUMP bb_3
 bb_3:
-  %23 = GET_UPVALUE U0
-  STORE_TVALUE R3, %23
+  %32 = LOAD_TVALUE R2
+  SET_UPVALUE U0, %32, undef
+  JUMP_IF_FALSY R1, bb_bytecode_1, bb_6
+bb_6:
+  %35 = GET_UPVALUE U0
+  STORE_TVALUE R3, %35
   CHECK_TAG R3, tvector, exit(11)
-  %27 = EXTRACT_VEC %23, 0i
-  %28 = FLOAT_TO_NUM %27
-  STORE_TVALUE R4, %23
-  %35 = EXTRACT_VEC %23, 1i
-  %36 = FLOAT_TO_NUM %35
-  %45 = ADD_NUM %28, %36
-  STORE_DOUBLE R2, %45
+  %39 = EXTRACT_VEC %35, 0i
+  %40 = FLOAT_TO_NUM %39
+  STORE_TVALUE R4, %35
+  %47 = EXTRACT_VEC %35, 1i
+  %48 = FLOAT_TO_NUM %47
+  %57 = ADD_NUM %40, %48
+  STORE_DOUBLE R2, %57
   STORE_TAG R2, tnumber
   INTERRUPT 17u
   RETURN R2, 1i
 bb_bytecode_1:
-  %50 = GET_UPVALUE U0
-  STORE_TVALUE R2, %50
+  %62 = GET_UPVALUE U0
+  STORE_TVALUE R2, %62
   CHECK_TAG R2, tvector, exit(19)
-  %54 = EXTRACT_VEC %50, 2i
-  %55 = FLOAT_TO_NUM %54
-  STORE_DOUBLE R2, %55
+  %66 = EXTRACT_VEC %62, 2i
+  %67 = FLOAT_TO_NUM %66
+  STORE_DOUBLE R2, %67
   STORE_TAG R2, tnumber
   INTERRUPT 21u
   RETURN R2, 1i
@@ -3514,16 +3749,27 @@ end
 ; function getsum($arg0, $arg1) line 2
 ; R0: vector [argument]
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
-  CHECK_TAG R1, tnumber, bb_exit_2
-   ; exit sync: R5, R3, {}
+  STORE_DOUBLE R3, 1
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R5, 3
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_1
+  CHECK_TAG R1, tnumber, exit(4)
   %12 = LOAD_DOUBLE R1
   %15 = NUM_TO_FLOAT %12
   STORE_VECTOR R2, 1, %15, 3
   STORE_TAG R2, tvector
-  %25 = FLOAT_TO_NUM %15
-  %40 = ADD_NUM %25, 3
-  STORE_DOUBLE R2, %40
+  JUMP bb_2
+bb_2:
+  %32 = LOAD_TVALUE R2
+  CHECK_TAG R2, tvector, bb_exit_5
+   ; exit sync: R0, {%32}
+  %36 = EXTRACT_VEC %32, 1i
+  %37 = FLOAT_TO_NUM %36
+  %42 = EXTRACT_VEC %32, 2i
+  %43 = FLOAT_TO_NUM %42
+  %52 = ADD_NUM %37, %43
+  STORE_DOUBLE R2, %52
   STORE_TAG R2, tnumber
   INTERRUPT 14u
   RETURN R2, 1i
@@ -3921,20 +4167,22 @@ bb_0:
 bb_4:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   STORE_DOUBLE R1, 0
   STORE_TAG R1, tnumber
+  CHECK_SAFE_ENV bb_fallback_5
   GET_CACHED_IMPORT R2, K1 (nil), 1073741824u ('ipairs'), 2u
-  %8 = LOAD_TVALUE R0, 0i, ttable
-  STORE_TVALUE R3, %8
+  JUMP bb_6
+bb_6:
+  %11 = LOAD_TVALUE R0, 0i, ttable
+  STORE_TVALUE R3, %11
   INTERRUPT 4u
   SET_SAVEDPC 6u
   CALL R2, 1i, 3i
   CHECK_SAFE_ENV exit(6)
-  CHECK_TAG R3, ttable, bb_fallback_5
-  CHECK_TAG R4, tnumber, bb_fallback_5
-  JUMP_CMP_NUM R4, 0, not_eq, bb_fallback_5, bb_6
-bb_6:
+  CHECK_TAG R3, ttable, bb_fallback_7
+  CHECK_TAG R4, tnumber, bb_fallback_7
+  JUMP_CMP_NUM R4, 0, not_eq, bb_fallback_7, bb_8
+bb_8:
   STORE_TAG R2, tnil
   STORE_POINTER R4, 0i
   STORE_EXTRA R4, 128i
@@ -3942,43 +4190,43 @@ bb_6:
   JUMP bb_bytecode_3
 bb_bytecode_2:
   CHECK_TAG R6, ttable, exit(7)
-  %28 = LOAD_POINTER R6
-  %29 = GET_SLOT_NODE_ADDR %28, 7u, K2 ('pos')
-  CHECK_SLOT_MATCH %29, K2 ('pos'), bb_fallback_7
-  %31 = LOAD_TVALUE %29, 0i
-  STORE_TVALUE R7, %31
-  JUMP bb_8
-bb_8:
+  %31 = LOAD_POINTER R6
+  %32 = GET_SLOT_NODE_ADDR %31, 7u, K2 ('pos')
+  CHECK_SLOT_MATCH %32, K2 ('pos'), bb_fallback_9
+  %34 = LOAD_TVALUE %32, 0i
+  STORE_TVALUE R7, %34
+  JUMP bb_10
+bb_10:
   CHECK_TAG R7, tvector, exit(9)
-  %38 = LOAD_FLOAT R7, 0i
-  %39 = FLOAT_TO_NUM %38
-  STORE_DOUBLE R7, %39
+  %41 = LOAD_FLOAT R7, 0i
+  %42 = FLOAT_TO_NUM %41
+  STORE_DOUBLE R7, %42
   STORE_TAG R7, tnumber
   CHECK_TAG R1, tnumber, exit(11)
-  %46 = LOAD_DOUBLE R1
-  %48 = ADD_NUM %46, %39
-  STORE_DOUBLE R1, %48
+  %49 = LOAD_DOUBLE R1
+  %51 = ADD_NUM %49, %42
+  STORE_DOUBLE R1, %51
   JUMP bb_bytecode_3
 bb_bytecode_3:
   INTERRUPT 12u
   CHECK_GC
-  CHECK_TAG R2, tnil, bb_fallback_10
-  %55 = LOAD_POINTER R3
-  %56 = LOAD_INT R4
-  %57 = GET_ARR_ADDR %55, %56
-  CHECK_ARRAY_SIZE %55, %56, bb_9
-  %59 = LOAD_TAG %57
-  JUMP_EQ_TAG %59, tnil, bb_9, bb_11
-bb_11:
-  %61 = ADD_INT %56, 1i
-  STORE_INT R4, %61
-  %63 = INT_TO_NUM %61
-  STORE_DOUBLE R5, %63
+  CHECK_TAG R2, tnil, bb_fallback_12
+  %58 = LOAD_POINTER R3
+  %59 = LOAD_INT R4
+  %60 = GET_ARR_ADDR %58, %59
+  CHECK_ARRAY_SIZE %58, %59, bb_11
+  %62 = LOAD_TAG %60
+  JUMP_EQ_TAG %62, tnil, bb_11, bb_13
+bb_13:
+  %64 = ADD_INT %59, 1i
+  STORE_INT R4, %64
+  %66 = INT_TO_NUM %64
+  STORE_DOUBLE R5, %66
   STORE_TAG R5, tnumber
-  %66 = LOAD_TVALUE %57
-  STORE_TVALUE R6, %66
+  %69 = LOAD_TVALUE %60
+  STORE_TVALUE R6, %69
   JUMP bb_bytecode_2
-bb_9:
+bb_11:
   INTERRUPT 14u
   RETURN R1, 1i
 )"
@@ -4464,11 +4712,16 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   GET_CACHED_IMPORT R1, K1 (nil), 1073741824u ('print'), 1u
-  %6 = LOAD_TVALUE R0, 0i, tuserdata
-  STORE_TVALUE R2, %6
+  JUMP bb_4
+bb_4:
+  %9 = LOAD_TVALUE R0, 0i, tuserdata
+  STORE_TVALUE R2, %9
+  CHECK_SAFE_ENV bb_fallback_5
   GET_CACHED_IMPORT R3, K4 (nil), 2149583872u ('vec2'.'create'), 4u
+  JUMP bb_6
+bb_6:
   STORE_DOUBLE R4, 0
   STORE_TAG R4, tnumber
   STORE_DOUBLE R5, 0
@@ -4606,11 +4859,13 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %7 = LOAD_DOUBLE R0
   %8 = CMP_SPLIT_TVALUE tnumber, tnumber, %7, %7, not_eq
   STORE_INT R1, %8
   STORE_TAG R1, tboolean
+  JUMP bb_4
+bb_4:
   INTERRUPT 5u
   RETURN R1, 1i
 )"
@@ -4633,13 +4888,15 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %7 = LOAD_DOUBLE R0
   %8 = NUM_TO_UINT %7
   %10 = BITAND_UINT %8, 31i
   %11 = CMP_INT %10, 0i, not_eq
   STORE_INT R1, %11
   STORE_TAG R1, tboolean
+  JUMP bb_4
+bb_4:
   INTERRUPT 7u
   RETURN R1, 1i
 )"
@@ -4671,29 +4928,107 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %9 = LOAD_DOUBLE R0
   %10 = NUM_TO_UINT %9
   %12 = BITAND_UINT %10, 4194303i
-  %20 = LOAD_DOUBLE R1
-  %21 = NUM_TO_UINT %20
-  %23 = BITAND_UINT %21, 4194303i
-  %33 = BITRSHIFT_UINT %10, 22i
-  %43 = BITRSHIFT_UINT %21, 22i
-  %78 = BITAND_UINT %33, -1047553i
-  %79 = BITAND_UINT %43, 1023i
-  %80 = BITLSHIFT_UINT %79, 10i
-  %81 = BITOR_UINT %78, %80
-  %96 = UINT_TO_FLOAT %12
-  %97 = UINT_TO_FLOAT %23
-  %98 = UINT_TO_FLOAT %81
-  STORE_VECTOR R5, %96, %97, %98, tvector
-  %102 = LOAD_TVALUE R5, 0i, tvector
-  STORE_TVALUE R6, %102
-  %107 = FLOAT_TO_NUM %96
-  %113 = FLOAT_TO_NUM %97
-  %122 = ADD_NUM %107, %113
-  STORE_SPLIT_TVALUE R7, tnumber, %122
+  JUMP bb_linear_27
+bb_linear_27:
+  %210 = LOAD_DOUBLE R1
+  %211 = NUM_TO_UINT %210
+  %212 = BITAND_UINT %211, 4194303i
+  %220 = BITRSHIFT_UINT %10, 22i
+  %228 = BITRSHIFT_UINT %211, 22i
+  %246 = BITAND_UINT %220, -1047553i
+  %247 = BITAND_UINT %228, 1023i
+  %248 = BITLSHIFT_UINT %247, 10i
+  %249 = BITOR_UINT %246, %248
+  %264 = UINT_TO_FLOAT %12
+  %265 = UINT_TO_FLOAT %212
+  %266 = UINT_TO_FLOAT %249
+  STORE_VECTOR R5, %264, %265, %266, tvector
+  %270 = LOAD_TVALUE R5, 0i, tvector
+  STORE_TVALUE R6, %270
+  %274 = EXTRACT_VEC %270, 0i
+  %275 = FLOAT_TO_NUM %274
+  %278 = EXTRACT_VEC %270, 1i
+  %279 = FLOAT_TO_NUM %278
+  %282 = ADD_NUM %275, %279
+  STORE_SPLIT_TVALUE R7, tnumber, %282
+  INTERRUPT 48u
+  RETURN R6, 2i
+bb_4:
+  CHECK_SAFE_ENV bb_fallback_7
+  %34 = LOAD_DOUBLE R1
+  %35 = NUM_TO_UINT %34
+  %37 = BITAND_UINT %35, 4194303i
+  %38 = UINT_TO_NUM %37
+  STORE_DOUBLE R3, %38
+  STORE_TAG R3, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_SAFE_ENV bb_fallback_11
+  %59 = LOAD_DOUBLE R0
+  %60 = NUM_TO_UINT %59
+  %61 = BITRSHIFT_UINT %60, 22i
+  %62 = UINT_TO_NUM %61
+  STORE_DOUBLE R5, %62
+  STORE_TAG R5, tnumber
+  JUMP bb_12
+bb_12:
+  CHECK_SAFE_ENV bb_fallback_15
+  %83 = LOAD_DOUBLE R1
+  %84 = NUM_TO_UINT %83
+  %85 = BITRSHIFT_UINT %84, 22i
+  %86 = UINT_TO_NUM %85
+  STORE_DOUBLE R6, %86
+  STORE_TAG R6, tnumber
+  JUMP bb_16
+bb_16:
+  STORE_DOUBLE R7, 10
+  STORE_TAG R7, tnumber
+  STORE_DOUBLE R8, 10
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_19
+  CHECK_TAG R5, tnumber, exit(31)
+  CHECK_TAG R6, tnumber, exit(31)
+  %115 = LOAD_DOUBLE R5
+  %116 = LOAD_DOUBLE R6
+  %118 = NUM_TO_UINT %115
+  %119 = NUM_TO_UINT %116
+  %134 = BITAND_UINT %118, -1047553i
+  %135 = BITAND_UINT %119, 1023i
+  %136 = BITLSHIFT_UINT %135, 10i
+  %137 = BITOR_UINT %134, %136
+  %138 = UINT_TO_NUM %137
+  STORE_DOUBLE R4, %138
+  STORE_TAG R4, tnumber
+  JUMP bb_20
+bb_20:
+  CHECK_SAFE_ENV bb_fallback_23
+  CHECK_TAG R2, tnumber, exit(36)
+  CHECK_TAG R3, tnumber, exit(36)
+  CHECK_TAG R4, tnumber, exit(36)
+  %159 = LOAD_DOUBLE R2
+  %160 = LOAD_DOUBLE R3
+  %161 = LOAD_DOUBLE R4
+  %162 = NUM_TO_FLOAT %159
+  %163 = NUM_TO_FLOAT %160
+  %164 = NUM_TO_FLOAT %161
+  STORE_VECTOR R5, %162, %163, %164
+  STORE_TAG R5, tvector
+  JUMP bb_24
+bb_24:
+  %184 = LOAD_TVALUE R5
+  STORE_TVALUE R6, %184
+  CHECK_TAG R5, tvector, exit(43)
+  %188 = EXTRACT_VEC %184, 0i
+  %189 = FLOAT_TO_NUM %188
+  %194 = EXTRACT_VEC %184, 1i
+  %195 = FLOAT_TO_NUM %194
+  %204 = ADD_NUM %189, %195
+  STORE_DOUBLE R7, %204
+  STORE_TAG R7, tnumber
   INTERRUPT 48u
   RETURN R6, 2i
 )"
@@ -4717,21 +5052,23 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  STORE_DOUBLE R5, 4
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   %13 = LOAD_DOUBLE R0
   %14 = LOAD_DOUBLE R1
   %15 = NUM_TO_UINT %13
   %16 = NUM_TO_INT %14
   %21 = ADD_INT %16, 4i
-  CHECK_CMP_INT %16, 0i, ge, bb_exit_4
-   ; exit sync: R5, {}
-  CHECK_CMP_INT %21, 32i, le, bb_exit_5
-   ; exit sync: R5, {}
+  CHECK_CMP_INT %16, 0i, ge, exit(3)
+  CHECK_CMP_INT %21, 32i, le, exit(3)
   %28 = BITRSHIFT_UINT %15, %16
   %29 = BITAND_UINT %28, 15i
   %30 = UINT_TO_NUM %29
   STORE_DOUBLE R2, %30
   STORE_TAG R2, tnumber
+  JUMP bb_4
+bb_4:
   INTERRUPT 8u
   RETURN R2, 1i
 )"
@@ -4756,19 +5093,51 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %11 = LOAD_DOUBLE R0
   %12 = NUM_TO_UINT %11
   %13 = UINT_TO_NUM %12
-  %20 = LOAD_DOUBLE R1
-  %21 = NUM_TO_UINT %20
-  %22 = UINT_TO_NUM %21
-  %32 = ADD_NUM %13, %22
-  %38 = LOAD_DOUBLE R2
-  %39 = NUM_TO_UINT %38
-  %40 = UINT_TO_NUM %39
-  %50 = ADD_NUM %32, %40
-  STORE_DOUBLE R3, %50
+  JUMP bb_linear_15
+bb_linear_15:
+  %92 = LOAD_DOUBLE R1
+  %93 = NUM_TO_UINT %92
+  %94 = UINT_TO_NUM %93
+  %104 = ADD_NUM %13, %94
+  %108 = LOAD_DOUBLE R2
+  %109 = NUM_TO_UINT %108
+  %110 = UINT_TO_NUM %109
+  %119 = ADD_NUM %104, %110
+  STORE_DOUBLE R3, %119
+  STORE_TAG R3, tnumber
+  INTERRUPT 17u
+  RETURN R3, 1i
+bb_4:
+  CHECK_SAFE_ENV bb_fallback_7
+  %32 = LOAD_DOUBLE R1
+  %33 = NUM_TO_UINT %32
+  %34 = UINT_TO_NUM %33
+  STORE_DOUBLE R6, %34
+  STORE_TAG R6, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R5, tnumber, exit(10)
+  CHECK_TAG R6, tnumber, exit(10)
+  %54 = LOAD_DOUBLE R5
+  %56 = ADD_NUM %54, R6
+  STORE_DOUBLE R4, %56
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %62 = LOAD_DOUBLE R2
+  %63 = NUM_TO_UINT %62
+  %64 = UINT_TO_NUM %63
+  STORE_DOUBLE R5, %64
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R4, tnumber, exit(16)
+  CHECK_TAG R5, tnumber, exit(16)
+  %84 = LOAD_DOUBLE R4
+  %86 = ADD_NUM %84, R5
+  STORE_DOUBLE R3, %86
   STORE_TAG R3, tnumber
   INTERRUPT 17u
   RETURN R3, 1i
@@ -4792,12 +5161,14 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %7 = LOAD_DOUBLE R0
   %8 = NUM_TO_UINT %7
   %9 = CMP_INT %8, 0i, not_eq
   STORE_INT R1, %9
   STORE_TAG R1, tboolean
+  JUMP bb_4
+bb_4:
   INTERRUPT 5u
   RETURN R1, 1i
 )"
@@ -4857,12 +5228,23 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   %6 = LOAD_FLOAT R0, 8i
+  %7 = FLOAT_TO_NUM %6
+  STORE_DOUBLE R2, %7
+  STORE_TAG R2, tnumber
   %12 = LOAD_FLOAT R0, 0i
+  %13 = FLOAT_TO_NUM %12
+  STORE_DOUBLE R3, %13
+  STORE_TAG R3, tnumber
   %18 = LOAD_FLOAT R0, 4i
+  %19 = FLOAT_TO_NUM %18
+  STORE_DOUBLE R4, %19
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   STORE_VECTOR R1, %6, %12, %18
   STORE_TAG R1, tvector
+  JUMP bb_4
+bb_4:
   INTERRUPT 10u
   RETURN R1, 1i
 )"
@@ -4891,11 +5273,61 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   %8 = LOAD_FLOAT R0, 0i
+  %9 = FLOAT_TO_NUM %8
+  STORE_DOUBLE R3, %9
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, %9
+  STORE_TAG R4, tnumber
   %20 = LOAD_FLOAT R0, 8i
-  %42 = LOAD_FLOAT R1, 4i
-  STORE_VECTOR R4, %20, %42, %8, tvector
+  %21 = FLOAT_TO_NUM %20
+  STORE_DOUBLE R5, %21
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
+  JUMP bb_linear_15
+bb_linear_15:
+  %140 = LOAD_FLOAT R1, 4i
+  STORE_VECTOR R4, %20, %140, %8
+  STORE_TAG R4, tvector
+  INTERRUPT 30u
+  RETURN R4, 1i
+bb_4:
+  %52 = LOAD_FLOAT R1, 4i
+  %53 = FLOAT_TO_NUM %52
+  STORE_DOUBLE R4, %53
+  STORE_TAG R4, tnumber
+  %58 = LOAD_FLOAT R1, 8i
+  %59 = FLOAT_TO_NUM %58
+  STORE_DOUBLE R5, %59
+  STORE_TAG R5, tnumber
+  %64 = LOAD_FLOAT R1, 0i
+  %65 = FLOAT_TO_NUM %64
+  STORE_DOUBLE R6, %65
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  STORE_VECTOR R3, %52, %58, %64
+  STORE_TAG R3, tvector
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R2, tvector, exit(20)
+  %96 = LOAD_FLOAT R2, 8i
+  %97 = FLOAT_TO_NUM %96
+  STORE_DOUBLE R5, %97
+  STORE_TAG R5, tnumber
+  CHECK_TAG R3, tvector, exit(22)
+  %102 = LOAD_FLOAT R3, 0i
+  %103 = FLOAT_TO_NUM %102
+  STORE_DOUBLE R6, %103
+  STORE_TAG R6, tnumber
+  %108 = LOAD_FLOAT R2, 4i
+  %109 = FLOAT_TO_NUM %108
+  STORE_DOUBLE R7, %109
+  STORE_TAG R7, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  STORE_VECTOR R4, %96, %102, %108
+  STORE_TAG R4, tvector
+  JUMP bb_12
+bb_12:
   INTERRUPT 30u
   RETURN R4, 1i
 )"
@@ -4997,13 +5429,17 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   %6 = LOAD_DOUBLE R0
   %7 = ADD_NUM %6, %6
+  STORE_DOUBLE R3, %7
+  STORE_TAG R3, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   %17 = NUM_TO_FLOAT %6
   %18 = NUM_TO_FLOAT %7
   STORE_VECTOR R1, %17, %18, 0
   STORE_TAG R1, tvector
+  JUMP bb_4
+bb_4:
   INTERRUPT 7u
   RETURN R1, 1i
 )"
@@ -5082,28 +5518,32 @@ end
         R"(
 ; function foo($arg0, $arg1) line 2
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %1 = LOAD_TAG R1
   %2 = GET_TYPE %1
   STORE_POINTER R2, %2
   STORE_TAG R2, tstring
-  %6 = LOAD_TAG R0
-  %7 = LOAD_INT R0
-  %8 = NOT_ANY %6, %7
-  STORE_INT R4, %8
+  JUMP bb_4
+bb_4:
+  %18 = LOAD_TAG R0
+  %19 = LOAD_INT R0
+  %20 = NOT_ANY %18, %19
+  STORE_INT R4, %20
   STORE_TAG R4, tboolean
   SET_SAVEDPC 7u
-  %12 = CMP_ANY R4, R1, eq
-  %13 = SUB_INT 1i, %12
-  STORE_INT R3, %13
+  %24 = CMP_ANY R4, R1, eq
+  %25 = SUB_INT 1i, %24
+  STORE_INT R3, %25
   STORE_TAG R3, tboolean
   JUMP bb_bytecode_2
 bb_bytecode_2:
-  implicit CHECK_SAFE_ENV exit(10)
-  %21 = LOAD_TAG R1
-  %22 = GET_TYPE %21
-  STORE_POINTER R4, %22
+  CHECK_SAFE_ENV bb_fallback_7
+  %33 = LOAD_TAG R1
+  %34 = GET_TYPE %33
+  STORE_POINTER R4, %34
   STORE_TAG R4, tstring
+  JUMP bb_8
+bb_8:
   INTERRUPT 15u
   RETURN R2, 3i
 )"
@@ -5131,16 +5571,27 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  STORE_DOUBLE R5, 0
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   %15 = LOAD_DOUBLE R0
   %16 = LOAD_DOUBLE R1
   %18 = NUM_TO_FLOAT %15
   %19 = NUM_TO_FLOAT %16
-  %27 = FLOAT_TO_NUM %18
-  %33 = FLOAT_TO_NUM %19
-  %42 = ADD_NUM %27, %33
-  %57 = ADD_NUM %42, 0
-  STORE_DOUBLE R3, %57
+  STORE_VECTOR R2, %18, %19, 0
+  STORE_TAG R2, tvector
+  JUMP bb_4
+bb_4:
+  CHECK_TAG R2, tvector, exit(8)
+  %40 = LOAD_FLOAT R2, 0i
+  %41 = FLOAT_TO_NUM %40
+  %46 = LOAD_FLOAT R2, 4i
+  %47 = FLOAT_TO_NUM %46
+  %56 = ADD_NUM %41, %47
+  %61 = LOAD_FLOAT R2, 8i
+  %62 = FLOAT_TO_NUM %61
+  %71 = ADD_NUM %56, %62
+  STORE_DOUBLE R3, %71
   STORE_TAG R3, tnumber
   INTERRUPT 16u
   RETURN R3, 1i
@@ -5245,22 +5696,66 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %11 = LOAD_POINTER R0
   %12 = LOAD_DOUBLE R1
   %13 = NUM_TO_INT %12
   CHECK_BUFFER_LEN %11, %13, 0i, 12i, %12, exit(2)
   %15 = BUFFER_READI32 %11, %13, tbuffer
   %16 = INT_TO_NUM %15
-  %33 = ADD_INT %13, 4i
-  %35 = BUFFER_READI32 %11, %33, tbuffer
-  %36 = INT_TO_NUM %35
-  %46 = ADD_NUM %16, %36
-  %62 = ADD_INT %13, 8i
-  %64 = BUFFER_READI32 %11, %62, tbuffer
-  %65 = INT_TO_NUM %64
-  %75 = ADD_NUM %46, %65
-  STORE_DOUBLE R2, %75
+  JUMP bb_linear_15
+bb_linear_15:
+  %124 = ADD_INT %13, 4i
+  %126 = BUFFER_READI32 %11, %124, tbuffer
+  %127 = INT_TO_NUM %126
+  %137 = ADD_NUM %16, %127
+  %146 = ADD_INT %13, 8i
+  %148 = BUFFER_READI32 %11, %146, tbuffer
+  %149 = INT_TO_NUM %148
+  %158 = ADD_NUM %137, %149
+  STORE_DOUBLE R2, %158
+  STORE_TAG R2, tnumber
+  INTERRUPT 23u
+  RETURN R2, 1i
+bb_4:
+  %36 = LOAD_DOUBLE R1
+  %37 = ADD_NUM %36, 4
+  STORE_DOUBLE R7, %37
+  STORE_TAG R7, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %45 = LOAD_POINTER R0
+  %47 = NUM_TO_INT %37
+  CHECK_BUFFER_LEN %45, %47, 0i, 4i, undef, exit(10)
+  %49 = BUFFER_READI32 %45, %47, tbuffer
+  %50 = INT_TO_NUM %49
+  STORE_DOUBLE R5, %50
+  STORE_TAG R5, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R4, tnumber, exit(14)
+  CHECK_TAG R5, tnumber, exit(14)
+  %70 = LOAD_DOUBLE R4
+  %72 = ADD_NUM %70, R5
+  STORE_DOUBLE R3, %72
+  STORE_TAG R3, tnumber
+  %77 = LOAD_DOUBLE R1
+  %78 = ADD_NUM %77, 8
+  STORE_DOUBLE R6, %78
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %86 = LOAD_POINTER R0
+  %88 = NUM_TO_INT %78
+  CHECK_BUFFER_LEN %86, %88, 0i, 4i, undef, exit(18)
+  %90 = BUFFER_READI32 %86, %88, tbuffer
+  %91 = INT_TO_NUM %90
+  STORE_DOUBLE R4, %91
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R3, tnumber, exit(22)
+  CHECK_TAG R4, tnumber, exit(22)
+  %111 = LOAD_DOUBLE R3
+  %113 = ADD_NUM %111, R4
+  STORE_DOUBLE R2, %113
   STORE_TAG R2, tnumber
   INTERRUPT 23u
   RETURN R2, 1i
@@ -5285,24 +5780,69 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   %8 = LOAD_DOUBLE R1
   %9 = ADD_NUM %8, 8
+  STORE_DOUBLE R6, %9
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   %17 = LOAD_POINTER R0
   %19 = NUM_TO_INT %9
-  CHECK_BUFFER_LEN %17, %19, -8i, 4i, %9, bb_exit_6
-   ; exit sync: R6, {%9}
+  CHECK_BUFFER_LEN %17, %19, -8i, 4i, %9, exit(3)
   %21 = BUFFER_READI32 %17, %19, tbuffer
   %22 = INT_TO_NUM %21
-  %39 = ADD_INT %19, -4i
-  %41 = BUFFER_READI32 %17, %39, tbuffer
-  %42 = INT_TO_NUM %41
-  %52 = ADD_NUM %22, %42
-  %68 = ADD_INT %19, -8i
-  %70 = BUFFER_READI32 %17, %68, tbuffer
-  %71 = INT_TO_NUM %70
-  %81 = ADD_NUM %52, %71
-  STORE_DOUBLE R2, %81
+  JUMP bb_linear_15
+bb_linear_15:
+  %128 = ADD_INT %19, -4i
+  %130 = BUFFER_READI32 %17, %128, tbuffer
+  %131 = INT_TO_NUM %130
+  %141 = ADD_NUM %22, %131
+  %150 = ADD_INT %19, -8i
+  %152 = BUFFER_READI32 %17, %150, tbuffer
+  %153 = INT_TO_NUM %152
+  %162 = ADD_NUM %141, %153
+  STORE_DOUBLE R2, %162
+  STORE_TAG R2, tnumber
+  INTERRUPT 23u
+  RETURN R2, 1i
+bb_4:
+  %40 = LOAD_DOUBLE R1
+  %41 = ADD_NUM %40, 4
+  STORE_DOUBLE R7, %41
+  STORE_TAG R7, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %49 = LOAD_POINTER R0
+  %51 = NUM_TO_INT %41
+  CHECK_BUFFER_LEN %49, %51, 0i, 4i, undef, exit(10)
+  %53 = BUFFER_READI32 %49, %51, tbuffer
+  %54 = INT_TO_NUM %53
+  STORE_DOUBLE R5, %54
+  STORE_TAG R5, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R4, tnumber, exit(14)
+  CHECK_TAG R5, tnumber, exit(14)
+  %74 = LOAD_DOUBLE R4
+  %76 = ADD_NUM %74, R5
+  STORE_DOUBLE R3, %76
+  STORE_TAG R3, tnumber
+  %81 = LOAD_DOUBLE R1
+  %82 = ADD_NUM %81, 0
+  STORE_DOUBLE R6, %82
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %90 = LOAD_POINTER R0
+  %92 = NUM_TO_INT %81
+  CHECK_BUFFER_LEN %90, %92, 0i, 4i, undef, exit(18)
+  %94 = BUFFER_READI32 %90, %92, tbuffer
+  %95 = INT_TO_NUM %94
+  STORE_DOUBLE R4, %95
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R3, tnumber, exit(22)
+  CHECK_TAG R4, tnumber, exit(22)
+  %115 = LOAD_DOUBLE R3
+  %117 = ADD_NUM %115, R4
+  STORE_DOUBLE R2, %117
   STORE_TAG R2, tnumber
   INTERRUPT 23u
   RETURN R2, 1i
@@ -5328,28 +5868,91 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %13 = LOAD_POINTER R0
   %14 = LOAD_DOUBLE R2
   %15 = NUM_TO_INT %14
   CHECK_BUFFER_LEN %13, %15, 0i, 4i, undef, exit(2)
   %17 = BUFFER_READI32 %13, %15, tbuffer
   %18 = INT_TO_NUM %17
-  %33 = LOAD_POINTER R1
-  %35 = NUM_TO_INT %18
-  CHECK_BUFFER_LEN %33, %35, 0i, 12i, %18, bb_exit_7
+  JUMP bb_linear_19
+bb_linear_19:
+  %159 = LOAD_POINTER R1
+  CHECK_BUFFER_LEN %159, %17, 0i, 4i, undef, bb_exit_20
    ; exit sync: R8, R3, {%18}
-  %37 = BUFFER_READF32 %33, %35, tbuffer
-  %38 = FLOAT_TO_NUM %37
-  %55 = ADD_INT %35, 4i
-  %57 = BUFFER_READF32 %33, %55, tbuffer
-  %58 = FLOAT_TO_NUM %57
-  %68 = MUL_NUM %38, %58
-  %84 = ADD_INT %35, 8i
-  %86 = BUFFER_READF32 %33, %84, tbuffer
-  %87 = FLOAT_TO_NUM %86
-  %97 = MUL_NUM %68, %87
-  STORE_DOUBLE R4, %97
+  %162 = BUFFER_READF32 %159, %17, tbuffer
+  %163 = FLOAT_TO_NUM %162
+  %170 = ADD_NUM %18, 4
+  %175 = NUM_TO_INT %170
+  CHECK_BUFFER_LEN %159, %175, 0i, 8i, %170, bb_exit_21
+   ; exit sync: R9, R8, R6, R3, {%170, %163, %18}
+  %177 = BUFFER_READF32 %159, %175, tbuffer
+  %178 = FLOAT_TO_NUM %177
+  %188 = MUL_NUM %163, %178
+  %199 = ADD_INT %175, 4i
+  %201 = BUFFER_READF32 %159, %199, tbuffer
+  %202 = FLOAT_TO_NUM %201
+  %211 = MUL_NUM %188, %202
+  STORE_DOUBLE R4, %211
+  STORE_TAG R4, tnumber
+  INTERRUPT 30u
+  RETURN R4, 1i
+bb_4:
+  CHECK_TAG R3, tnumber, exit(7)
+  %38 = LOAD_DOUBLE R3
+  %39 = ADD_NUM %38, 0
+  STORE_DOUBLE R8, %39
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %47 = LOAD_POINTER R1
+  %49 = NUM_TO_INT %38
+  CHECK_BUFFER_LEN %47, %49, 0i, 4i, undef, exit(10)
+  %51 = BUFFER_READF32 %47, %49, tbuffer
+  %52 = FLOAT_TO_NUM %51
+  STORE_DOUBLE R6, %52
+  STORE_TAG R6, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R3, tnumber, exit(14)
+  %70 = LOAD_DOUBLE R3
+  %71 = ADD_NUM %70, 4
+  STORE_DOUBLE R9, %71
+  STORE_TAG R9, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %79 = LOAD_POINTER R1
+  %81 = NUM_TO_INT %71
+  CHECK_BUFFER_LEN %79, %81, 0i, 4i, undef, exit(17)
+  %83 = BUFFER_READF32 %79, %81, tbuffer
+  %84 = FLOAT_TO_NUM %83
+  STORE_DOUBLE R7, %84
+  STORE_TAG R7, tnumber
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R6, tnumber, exit(21)
+  CHECK_TAG R7, tnumber, exit(21)
+  %104 = LOAD_DOUBLE R6
+  %106 = MUL_NUM %104, R7
+  STORE_DOUBLE R5, %106
+  STORE_TAG R5, tnumber
+  CHECK_TAG R3, tnumber, exit(22)
+  %111 = LOAD_DOUBLE R3
+  %112 = ADD_NUM %111, 8
+  STORE_DOUBLE R8, %112
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_15
+  %120 = LOAD_POINTER R1
+  %122 = NUM_TO_INT %112
+  CHECK_BUFFER_LEN %120, %122, 0i, 4i, undef, exit(25)
+  %124 = BUFFER_READF32 %120, %122, tbuffer
+  %125 = FLOAT_TO_NUM %124
+  STORE_DOUBLE R6, %125
+  JUMP bb_16
+bb_16:
+  CHECK_TAG R5, tnumber, exit(29)
+  CHECK_TAG R6, tnumber, exit(29)
+  %145 = LOAD_DOUBLE R5
+  %147 = MUL_NUM %145, R6
+  STORE_DOUBLE R4, %147
   STORE_TAG R4, tnumber
   INTERRUPT 30u
   RETURN R4, 1i
@@ -5384,57 +5987,110 @@ bb_0:
 bb_4:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   STORE_DOUBLE R2, 0
   STORE_TAG R2, tnumber
   STORE_DOUBLE R5, 0
   STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_5
   GET_CACHED_IMPORT R6, K3 (nil), 2148534272u ('buffer'.'len'), 3u
-  %12 = LOAD_TVALUE R0, 0i, tbuffer
-  STORE_TVALUE R7, %12
+  JUMP bb_6
+bb_6:
+  %15 = LOAD_TVALUE R0, 0i, tbuffer
+  STORE_TVALUE R7, %15
   INTERRUPT 5u
   SET_SAVEDPC 7u
   CALL R6, 1i, 1i
-  CHECK_TAG R6, tnumber, bb_fallback_5
-  %19 = LOAD_DOUBLE R6
-  %20 = SUB_NUM %19, 1
-  STORE_DOUBLE R3, %20
+  CHECK_TAG R6, tnumber, bb_fallback_7
+  %22 = LOAD_DOUBLE R6
+  %23 = SUB_NUM %22, 1
+  STORE_DOUBLE R3, %23
   STORE_TAG R3, tnumber
-  JUMP bb_6
-bb_6:
+  JUMP bb_8
+bb_8:
   STORE_DOUBLE R4, 12
   STORE_TAG R4, tnumber
   CHECK_TAG R3, tnumber, exit(9)
-  %33 = LOAD_DOUBLE R3
-  JUMP_CMP_NUM R5, %33, not_le, bb_bytecode_3, bb_bytecode_2
+  %36 = LOAD_DOUBLE R3
+  JUMP_CMP_NUM R5, %36, not_le, bb_bytecode_3, bb_bytecode_2
 bb_bytecode_2:
-  implicit CHECK_SAFE_ENV exit(10)
   INTERRUPT 10u
+  CHECK_SAFE_ENV bb_fallback_9
   CHECK_TAG R5, tnumber, exit(12)
-  %42 = LOAD_POINTER R0
-  %43 = LOAD_DOUBLE R5
-  %44 = NUM_TO_INT %43
-  CHECK_BUFFER_LEN %42, %44, 0i, 12i, %43, exit(12)
-  %46 = BUFFER_READF32 %42, %44, tbuffer
-  %47 = FLOAT_TO_NUM %46
-  %64 = ADD_INT %44, 4i
-  %66 = BUFFER_READF32 %42, %64, tbuffer
-  %67 = FLOAT_TO_NUM %66
-  %77 = MUL_NUM %47, %67
-  %93 = ADD_INT %44, 8i
-  %95 = BUFFER_READF32 %42, %93, tbuffer
-  %96 = FLOAT_TO_NUM %95
-  %106 = MUL_NUM %77, %96
-  CHECK_TAG R2, tnumber, bb_exit_10
-   ; exit sync: R8, R7, R6, {%96, %77, %106}
-  %113 = LOAD_DOUBLE R2
-  %115 = ADD_NUM %113, %106
-  STORE_DOUBLE R2, %115
+  %45 = LOAD_POINTER R0
+  %46 = LOAD_DOUBLE R5
+  %47 = NUM_TO_INT %46
+  CHECK_BUFFER_LEN %45, %47, 0i, 12i, %46, exit(12)
+  %49 = BUFFER_READF32 %45, %47, tbuffer
+  %50 = FLOAT_TO_NUM %49
+  JUMP bb_linear_21
+bb_linear_21:
+  %175 = ADD_INT %47, 4i
+  %177 = BUFFER_READF32 %45, %175, tbuffer
+  %178 = FLOAT_TO_NUM %177
+  %188 = MUL_NUM %50, %178
+  %199 = ADD_INT %47, 8i
+  %201 = BUFFER_READF32 %45, %199, tbuffer
+  %202 = FLOAT_TO_NUM %201
+  %211 = MUL_NUM %188, %202
+  %216 = LOAD_DOUBLE R2
+  %217 = ADD_NUM %216, %211
+  STORE_DOUBLE R2, %217
   CHECK_GC
-  %118 = LOAD_DOUBLE R3
-  %120 = ADD_NUM %43, 12
-  STORE_DOUBLE R5, %120
-  JUMP_CMP_NUM %120, %118, le, bb_bytecode_2, bb_bytecode_3
+  %220 = LOAD_DOUBLE R3
+  %222 = ADD_NUM %46, 12
+  STORE_DOUBLE R5, %222
+  JUMP_CMP_NUM %222, %220, le, bb_bytecode_2, bb_bytecode_3
+bb_10:
+  CHECK_TAG R5, tnumber, exit(17)
+  %70 = LOAD_DOUBLE R5
+  %71 = ADD_NUM %70, 4
+  STORE_DOUBLE R11, %71
+  STORE_TAG R11, tnumber
+  CHECK_SAFE_ENV bb_fallback_13
+  %79 = LOAD_POINTER R0
+  %81 = NUM_TO_INT %71
+  CHECK_BUFFER_LEN %79, %81, 0i, 4i, undef, exit(20)
+  %83 = BUFFER_READF32 %79, %81, tbuffer
+  %84 = FLOAT_TO_NUM %83
+  STORE_DOUBLE R9, %84
+  STORE_TAG R9, tnumber
+  JUMP bb_14
+bb_14:
+  CHECK_TAG R8, tnumber, exit(24)
+  CHECK_TAG R9, tnumber, exit(24)
+  %104 = LOAD_DOUBLE R8
+  %106 = MUL_NUM %104, R9
+  STORE_DOUBLE R7, %106
+  STORE_TAG R7, tnumber
+  CHECK_TAG R5, tnumber, exit(25)
+  %111 = LOAD_DOUBLE R5
+  %112 = ADD_NUM %111, 8
+  STORE_DOUBLE R10, %112
+  STORE_TAG R10, tnumber
+  CHECK_SAFE_ENV bb_fallback_17
+  %120 = LOAD_POINTER R0
+  %122 = NUM_TO_INT %112
+  CHECK_BUFFER_LEN %120, %122, 0i, 4i, undef, exit(28)
+  %124 = BUFFER_READF32 %120, %122, tbuffer
+  %125 = FLOAT_TO_NUM %124
+  STORE_DOUBLE R8, %125
+  JUMP bb_18
+bb_18:
+  CHECK_TAG R7, tnumber, exit(32)
+  CHECK_TAG R8, tnumber, exit(32)
+  %145 = LOAD_DOUBLE R7
+  %147 = MUL_NUM %145, R8
+  CHECK_TAG R2, tnumber, bb_exit_22
+   ; exit sync: R6, {%147}
+  %154 = LOAD_DOUBLE R2
+  %156 = ADD_NUM %154, %147
+  STORE_DOUBLE R2, %156
+  CHECK_GC
+  %159 = LOAD_DOUBLE R3
+  %160 = LOAD_DOUBLE R5
+  %161 = ADD_NUM %160, 12
+  STORE_DOUBLE R5, %161
+  JUMP_CMP_NUM %161, %159, le, bb_bytecode_2, bb_bytecode_3
 bb_bytecode_3:
   INTERRUPT 35u
   RETURN R2, 1i
@@ -5469,7 +6125,7 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %19 = LOAD_POINTER R0
   %20 = LOAD_DOUBLE R1
   %21 = NUM_TO_INT %20
@@ -5477,18 +6133,53 @@ bb_bytecode_1:
   %23 = LOAD_DOUBLE R2
   %24 = NUM_TO_UINT %23
   BUFFER_WRITEI32 %19, %21, %24, tbuffer
-  %30 = ADD_NUM %20, 4
-  %41 = ADD_INT %21, 4i
-  %43 = LOAD_DOUBLE R3
-  %44 = NUM_TO_UINT %43
-  BUFFER_WRITEI32 %19, %41, %44, tbuffer
-  %50 = ADD_NUM %30, 4
-  %61 = ADD_INT %21, 8i
-  %63 = LOAD_DOUBLE R4
-  %64 = NUM_TO_UINT %63
-  BUFFER_WRITEI32 %19, %61, %64, tbuffer
-  %70 = ADD_NUM %50, 4
-  STORE_DOUBLE R1, %70
+  JUMP bb_linear_15
+bb_linear_15:
+  %125 = ADD_NUM %20, 4
+  %129 = ADD_INT %21, 4i
+  %131 = LOAD_DOUBLE R3
+  %132 = NUM_TO_UINT %131
+  BUFFER_WRITEI32 %19, %129, %132, tbuffer
+  %138 = ADD_NUM %125, 4
+  %142 = ADD_INT %21, 8i
+  %144 = LOAD_DOUBLE R4
+  %145 = NUM_TO_UINT %144
+  BUFFER_WRITEI32 %19, %142, %145, tbuffer
+  %151 = ADD_NUM %138, 4
+  STORE_DOUBLE R1, %151
+  INTERRUPT 27u
+  RETURN R1, 1i
+bb_4:
+  CHECK_TAG R1, tnumber, exit(8)
+  %45 = LOAD_DOUBLE R1
+  %46 = ADD_NUM %45, 4
+  STORE_DOUBLE R1, %46
+  CHECK_SAFE_ENV bb_fallback_7
+  %55 = LOAD_POINTER R0
+  %57 = NUM_TO_INT %46
+  CHECK_BUFFER_LEN %55, %57, 0i, 4i, undef, exit(11)
+  %59 = LOAD_DOUBLE R3
+  %60 = NUM_TO_UINT %59
+  BUFFER_WRITEI32 %55, %57, %60, tbuffer
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R1, tnumber, exit(17)
+  %81 = LOAD_DOUBLE R1
+  %82 = ADD_NUM %81, 4
+  STORE_DOUBLE R1, %82
+  CHECK_SAFE_ENV bb_fallback_11
+  %91 = LOAD_POINTER R0
+  %93 = NUM_TO_INT %82
+  CHECK_BUFFER_LEN %91, %93, 0i, 4i, undef, exit(20)
+  %95 = LOAD_DOUBLE R4
+  %96 = NUM_TO_UINT %95
+  BUFFER_WRITEI32 %91, %93, %96, tbuffer
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R1, tnumber, exit(26)
+  %117 = LOAD_DOUBLE R1
+  %118 = ADD_NUM %117, 4
+  STORE_DOUBLE R1, %118
   INTERRUPT 27u
   RETURN R1, 1i
 )"
@@ -5512,24 +6203,68 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   %8 = LOAD_DOUBLE R1
   %9 = SUB_NUM %8, 8
+  STORE_DOUBLE R6, %9
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   %17 = LOAD_POINTER R0
   %19 = NUM_TO_INT %9
-  CHECK_BUFFER_LEN %17, %19, 0i, 12i, %9, bb_exit_6
-   ; exit sync: R6, {%9}
+  CHECK_BUFFER_LEN %17, %19, 0i, 12i, %9, exit(3)
   %21 = BUFFER_READI32 %17, %19, tbuffer
   %22 = INT_TO_NUM %21
-  %39 = ADD_INT %19, 4i
-  %41 = BUFFER_READI32 %17, %39, tbuffer
-  %42 = INT_TO_NUM %41
-  %52 = ADD_NUM %22, %42
-  %68 = ADD_INT %19, 8i
-  %70 = BUFFER_READI32 %17, %68, tbuffer
-  %71 = INT_TO_NUM %70
-  %81 = ADD_NUM %52, %71
-  STORE_DOUBLE R2, %81
+  JUMP bb_linear_15
+bb_linear_15:
+  %128 = ADD_INT %19, 4i
+  %130 = BUFFER_READI32 %17, %128, tbuffer
+  %131 = INT_TO_NUM %130
+  %141 = ADD_NUM %22, %131
+  %149 = ADD_INT %19, 8i
+  %151 = BUFFER_READI32 %17, %149, tbuffer
+  %152 = INT_TO_NUM %151
+  %161 = ADD_NUM %141, %152
+  STORE_DOUBLE R2, %161
+  STORE_TAG R2, tnumber
+  INTERRUPT 23u
+  RETURN R2, 1i
+bb_4:
+  %40 = LOAD_DOUBLE R1
+  %41 = SUB_NUM %40, 4
+  STORE_DOUBLE R7, %41
+  STORE_TAG R7, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %49 = LOAD_POINTER R0
+  %51 = NUM_TO_INT %41
+  CHECK_BUFFER_LEN %49, %51, 0i, 4i, undef, exit(10)
+  %53 = BUFFER_READI32 %49, %51, tbuffer
+  %54 = INT_TO_NUM %53
+  STORE_DOUBLE R5, %54
+  STORE_TAG R5, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R4, tnumber, exit(14)
+  CHECK_TAG R5, tnumber, exit(14)
+  %74 = LOAD_DOUBLE R4
+  %76 = ADD_NUM %74, R5
+  STORE_DOUBLE R3, %76
+  STORE_TAG R3, tnumber
+  %81 = LOAD_DOUBLE R1
+  STORE_DOUBLE R6, %81
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %90 = LOAD_POINTER R0
+  %92 = NUM_TO_INT %81
+  CHECK_BUFFER_LEN %90, %92, 0i, 4i, undef, exit(18)
+  %94 = BUFFER_READI32 %90, %92, tbuffer
+  %95 = INT_TO_NUM %94
+  STORE_DOUBLE R4, %95
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R3, tnumber, exit(22)
+  CHECK_TAG R4, tnumber, exit(22)
+  %115 = LOAD_DOUBLE R3
+  %117 = ADD_NUM %115, R4
+  STORE_DOUBLE R2, %117
   STORE_TAG R2, tnumber
   INTERRUPT 23u
   RETURN R2, 1i
@@ -5554,22 +6289,66 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %11 = LOAD_POINTER R0
   %12 = LOAD_DOUBLE R1
   %13 = NUM_TO_INT %12
   CHECK_BUFFER_LEN %11, %13, -4i, 8i, %12, exit(2)
   %15 = BUFFER_READI32 %11, %13, tbuffer
   %16 = INT_TO_NUM %15
-  %33 = ADD_INT %13, -4i
-  %35 = BUFFER_READI32 %11, %33, tbuffer
-  %36 = INT_TO_NUM %35
-  %46 = ADD_NUM %16, %36
-  %62 = ADD_INT %13, 4i
-  %64 = BUFFER_READI32 %11, %62, tbuffer
-  %65 = INT_TO_NUM %64
-  %75 = ADD_NUM %46, %65
-  STORE_DOUBLE R2, %75
+  JUMP bb_linear_15
+bb_linear_15:
+  %124 = ADD_INT %13, -4i
+  %126 = BUFFER_READI32 %11, %124, tbuffer
+  %127 = INT_TO_NUM %126
+  %137 = ADD_NUM %16, %127
+  %146 = ADD_INT %13, 4i
+  %148 = BUFFER_READI32 %11, %146, tbuffer
+  %149 = INT_TO_NUM %148
+  %158 = ADD_NUM %137, %149
+  STORE_DOUBLE R2, %158
+  STORE_TAG R2, tnumber
+  INTERRUPT 23u
+  RETURN R2, 1i
+bb_4:
+  %36 = LOAD_DOUBLE R1
+  %37 = SUB_NUM %36, 4
+  STORE_DOUBLE R7, %37
+  STORE_TAG R7, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %45 = LOAD_POINTER R0
+  %47 = NUM_TO_INT %37
+  CHECK_BUFFER_LEN %45, %47, 0i, 4i, undef, exit(10)
+  %49 = BUFFER_READI32 %45, %47, tbuffer
+  %50 = INT_TO_NUM %49
+  STORE_DOUBLE R5, %50
+  STORE_TAG R5, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R4, tnumber, exit(14)
+  CHECK_TAG R5, tnumber, exit(14)
+  %70 = LOAD_DOUBLE R4
+  %72 = ADD_NUM %70, R5
+  STORE_DOUBLE R3, %72
+  STORE_TAG R3, tnumber
+  %77 = LOAD_DOUBLE R1
+  %78 = ADD_NUM %77, 4
+  STORE_DOUBLE R6, %78
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %86 = LOAD_POINTER R0
+  %88 = NUM_TO_INT %78
+  CHECK_BUFFER_LEN %86, %88, 0i, 4i, undef, exit(18)
+  %90 = BUFFER_READI32 %86, %88, tbuffer
+  %91 = INT_TO_NUM %90
+  STORE_DOUBLE R4, %91
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R3, tnumber, exit(22)
+  CHECK_TAG R4, tnumber, exit(22)
+  %111 = LOAD_DOUBLE R3
+  %113 = ADD_NUM %111, R4
+  STORE_DOUBLE R2, %113
   STORE_TAG R2, tnumber
   INTERRUPT 23u
   RETURN R2, 1i
@@ -5603,31 +6382,249 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   %10 = LOAD_DOUBLE R0
+  %11 = ADD_NUM %10, 0
+  STORE_DOUBLE R5, %11
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %11
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   %25 = LOAD_POINTER R1
   %27 = NUM_TO_INT %10
-  CHECK_BUFFER_LEN %25, %27, 0i, 1i, undef, bb_exit_19
-   ; exit sync: R8, R5, {%10}
+  CHECK_BUFFER_LEN %25, %27, 0i, 1i, undef, exit(4)
   %29 = BUFFER_READI8 %25, %27, tbuffer
+  JUMP bb_linear_67
+bb_linear_67:
   BUFFER_WRITEI8 %25, %27, %29, tbuffer
-  %70 = BUFFER_READU8 %25, %27, tbuffer
-  BUFFER_WRITEI8 %25, %27, %70, tbuffer
-  %107 = LOAD_POINTER R2
-  CHECK_BUFFER_LEN %107, %27, 0i, 2i, %10, exit(32)
-  %111 = BUFFER_READI8 %107, %27, tbuffer
-  BUFFER_WRITEI8 %107, %27, %111, tbuffer
-  %152 = BUFFER_READU8 %107, %27, tbuffer
-  BUFFER_WRITEI8 %107, %27, %152, tbuffer
-  %191 = ADD_INT %27, 1i
-  %193 = BUFFER_READI8 %107, %191, tbuffer
-  BUFFER_WRITEI8 %107, %191, %193, tbuffer
-  %234 = BUFFER_READU8 %107, %191, tbuffer
-  BUFFER_WRITEI8 %107, %191, %234, tbuffer
-  %275 = BUFFER_READI16 %107, %27, tbuffer
-  BUFFER_WRITEI16 %107, %27, %275, tbuffer
-  %316 = BUFFER_READU16 %107, %27, tbuffer
-  BUFFER_WRITEI16 %107, %27, %316, tbuffer
+  %553 = BUFFER_READU8 %25, %27, tbuffer
+  BUFFER_WRITEI8 %25, %27, %553, tbuffer
+  %578 = LOAD_POINTER R2
+  CHECK_BUFFER_LEN %578, %27, 0i, 2i, %10, bb_exit_68
+   ; exit sync: R6, {%553}
+  %581 = BUFFER_READI8 %578, %27, tbuffer
+  BUFFER_WRITEI8 %578, %27, %581, tbuffer
+  %609 = BUFFER_READU8 %578, %27, tbuffer
+  BUFFER_WRITEI8 %578, %27, %609, tbuffer
+  %635 = ADD_INT %27, 1i
+  %637 = BUFFER_READI8 %578, %635, tbuffer
+  BUFFER_WRITEI8 %578, %635, %637, tbuffer
+  %665 = BUFFER_READU8 %578, %635, tbuffer
+  BUFFER_WRITEI8 %578, %635, %665, tbuffer
+  %693 = BUFFER_READI16 %578, %27, tbuffer
+  BUFFER_WRITEI16 %578, %27, %693, tbuffer
+  %721 = BUFFER_READU16 %578, %27, tbuffer
+  BUFFER_WRITEI16 %578, %27, %721, tbuffer
+  INTERRUPT 112u
+  RETURN R0, 0i
+bb_4:
+  CHECK_SAFE_ENV bb_fallback_7
+  CHECK_TAG R5, tnumber, exit(10)
+  CHECK_TAG R6, tnumber, exit(10)
+  %53 = LOAD_POINTER R1
+  %54 = LOAD_DOUBLE R5
+  %55 = NUM_TO_INT %54
+  CHECK_BUFFER_LEN %53, %55, 0i, 1i, undef, exit(10)
+  %57 = LOAD_DOUBLE R6
+  %58 = NUM_TO_UINT %57
+  BUFFER_WRITEI8 %53, %55, %58, tbuffer
+  JUMP bb_8
+bb_8:
+  %75 = LOAD_DOUBLE R0
+  %76 = ADD_NUM %75, 0
+  STORE_DOUBLE R5, %76
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %76
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %90 = LOAD_POINTER R1
+  %92 = NUM_TO_INT %75
+  CHECK_BUFFER_LEN %90, %92, 0i, 1i, undef, exit(18)
+  %94 = BUFFER_READU8 %90, %92, tbuffer
+  %95 = INT_TO_NUM %94
+  STORE_DOUBLE R6, %95
+  STORE_TAG R6, tnumber
+  JUMP bb_12
+bb_12:
+  CHECK_SAFE_ENV bb_fallback_15
+  CHECK_TAG R5, tnumber, exit(24)
+  CHECK_TAG R6, tnumber, exit(24)
+  %118 = LOAD_POINTER R1
+  %119 = LOAD_DOUBLE R5
+  %120 = NUM_TO_INT %119
+  CHECK_BUFFER_LEN %118, %120, 0i, 1i, undef, exit(24)
+  %122 = LOAD_DOUBLE R6
+  %123 = NUM_TO_UINT %122
+  BUFFER_WRITEI8 %118, %120, %123, tbuffer
+  JUMP bb_16
+bb_16:
+  %140 = LOAD_DOUBLE R0
+  %141 = ADD_NUM %140, 0
+  STORE_DOUBLE R5, %141
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %141
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_19
+  %155 = LOAD_POINTER R2
+  %157 = NUM_TO_INT %140
+  CHECK_BUFFER_LEN %155, %157, 0i, 1i, undef, exit(32)
+  %159 = BUFFER_READI8 %155, %157, tbuffer
+  %160 = INT_TO_NUM %159
+  STORE_DOUBLE R6, %160
+  STORE_TAG R6, tnumber
+  JUMP bb_20
+bb_20:
+  CHECK_SAFE_ENV bb_fallback_23
+  CHECK_TAG R5, tnumber, exit(38)
+  CHECK_TAG R6, tnumber, exit(38)
+  %183 = LOAD_POINTER R2
+  %184 = LOAD_DOUBLE R5
+  %185 = NUM_TO_INT %184
+  CHECK_BUFFER_LEN %183, %185, 0i, 1i, undef, exit(38)
+  %187 = LOAD_DOUBLE R6
+  %188 = NUM_TO_UINT %187
+  BUFFER_WRITEI8 %183, %185, %188, tbuffer
+  JUMP bb_24
+bb_24:
+  %205 = LOAD_DOUBLE R0
+  %206 = ADD_NUM %205, 0
+  STORE_DOUBLE R5, %206
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %206
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_27
+  %220 = LOAD_POINTER R2
+  %222 = NUM_TO_INT %205
+  CHECK_BUFFER_LEN %220, %222, 0i, 1i, undef, exit(46)
+  %224 = BUFFER_READU8 %220, %222, tbuffer
+  %225 = INT_TO_NUM %224
+  STORE_DOUBLE R6, %225
+  STORE_TAG R6, tnumber
+  JUMP bb_28
+bb_28:
+  CHECK_SAFE_ENV bb_fallback_31
+  CHECK_TAG R5, tnumber, exit(52)
+  CHECK_TAG R6, tnumber, exit(52)
+  %248 = LOAD_POINTER R2
+  %249 = LOAD_DOUBLE R5
+  %250 = NUM_TO_INT %249
+  CHECK_BUFFER_LEN %248, %250, 0i, 1i, undef, exit(52)
+  %252 = LOAD_DOUBLE R6
+  %253 = NUM_TO_UINT %252
+  BUFFER_WRITEI8 %248, %250, %253, tbuffer
+  JUMP bb_32
+bb_32:
+  %270 = LOAD_DOUBLE R0
+  %271 = ADD_NUM %270, 1
+  STORE_DOUBLE R5, %271
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %271
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_35
+  %285 = LOAD_POINTER R2
+  %287 = NUM_TO_INT %271
+  CHECK_BUFFER_LEN %285, %287, 0i, 1i, undef, exit(60)
+  %289 = BUFFER_READI8 %285, %287, tbuffer
+  %290 = INT_TO_NUM %289
+  STORE_DOUBLE R6, %290
+  STORE_TAG R6, tnumber
+  JUMP bb_36
+bb_36:
+  CHECK_SAFE_ENV bb_fallback_39
+  CHECK_TAG R5, tnumber, exit(66)
+  CHECK_TAG R6, tnumber, exit(66)
+  %313 = LOAD_POINTER R2
+  %314 = LOAD_DOUBLE R5
+  %315 = NUM_TO_INT %314
+  CHECK_BUFFER_LEN %313, %315, 0i, 1i, undef, exit(66)
+  %317 = LOAD_DOUBLE R6
+  %318 = NUM_TO_UINT %317
+  BUFFER_WRITEI8 %313, %315, %318, tbuffer
+  JUMP bb_40
+bb_40:
+  %335 = LOAD_DOUBLE R0
+  %336 = ADD_NUM %335, 1
+  STORE_DOUBLE R5, %336
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %336
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_43
+  %350 = LOAD_POINTER R2
+  %352 = NUM_TO_INT %336
+  CHECK_BUFFER_LEN %350, %352, 0i, 1i, undef, exit(74)
+  %354 = BUFFER_READU8 %350, %352, tbuffer
+  %355 = INT_TO_NUM %354
+  STORE_DOUBLE R6, %355
+  STORE_TAG R6, tnumber
+  JUMP bb_44
+bb_44:
+  CHECK_SAFE_ENV bb_fallback_47
+  CHECK_TAG R5, tnumber, exit(80)
+  CHECK_TAG R6, tnumber, exit(80)
+  %378 = LOAD_POINTER R2
+  %379 = LOAD_DOUBLE R5
+  %380 = NUM_TO_INT %379
+  CHECK_BUFFER_LEN %378, %380, 0i, 1i, undef, exit(80)
+  %382 = LOAD_DOUBLE R6
+  %383 = NUM_TO_UINT %382
+  BUFFER_WRITEI8 %378, %380, %383, tbuffer
+  JUMP bb_48
+bb_48:
+  %400 = LOAD_DOUBLE R0
+  %401 = ADD_NUM %400, 0
+  STORE_DOUBLE R5, %401
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %401
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_51
+  %415 = LOAD_POINTER R2
+  %417 = NUM_TO_INT %400
+  CHECK_BUFFER_LEN %415, %417, 0i, 2i, undef, exit(88)
+  %419 = BUFFER_READI16 %415, %417, tbuffer
+  %420 = INT_TO_NUM %419
+  STORE_DOUBLE R6, %420
+  STORE_TAG R6, tnumber
+  JUMP bb_52
+bb_52:
+  CHECK_SAFE_ENV bb_fallback_55
+  CHECK_TAG R5, tnumber, exit(94)
+  CHECK_TAG R6, tnumber, exit(94)
+  %443 = LOAD_POINTER R2
+  %444 = LOAD_DOUBLE R5
+  %445 = NUM_TO_INT %444
+  CHECK_BUFFER_LEN %443, %445, 0i, 2i, undef, exit(94)
+  %447 = LOAD_DOUBLE R6
+  %448 = NUM_TO_UINT %447
+  BUFFER_WRITEI16 %443, %445, %448, tbuffer
+  JUMP bb_56
+bb_56:
+  %465 = LOAD_DOUBLE R0
+  %466 = ADD_NUM %465, 0
+  STORE_DOUBLE R5, %466
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %466
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_59
+  %480 = LOAD_POINTER R2
+  %482 = NUM_TO_INT %465
+  CHECK_BUFFER_LEN %480, %482, 0i, 2i, undef, exit(102)
+  %484 = BUFFER_READU16 %480, %482, tbuffer
+  %485 = INT_TO_NUM %484
+  STORE_DOUBLE R6, %485
+  STORE_TAG R6, tnumber
+  JUMP bb_60
+bb_60:
+  CHECK_SAFE_ENV bb_fallback_63
+  CHECK_TAG R5, tnumber, exit(108)
+  CHECK_TAG R6, tnumber, exit(108)
+  %508 = LOAD_POINTER R2
+  %509 = LOAD_DOUBLE R5
+  %510 = NUM_TO_INT %509
+  CHECK_BUFFER_LEN %508, %510, 0i, 2i, undef, exit(108)
+  %512 = LOAD_DOUBLE R6
+  %513 = NUM_TO_UINT %512
+  BUFFER_WRITEI16 %508, %510, %513, tbuffer
+  JUMP bb_64
+bb_64:
   INTERRUPT 112u
   RETURN R0, 0i
 )"
@@ -5660,32 +6657,247 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   %10 = LOAD_DOUBLE R0
   %11 = SUB_NUM %10, 1
+  STORE_DOUBLE R5, %11
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %11
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   %25 = LOAD_POINTER R1
   %27 = NUM_TO_INT %11
-  CHECK_BUFFER_LEN %25, %27, 0i, 1i, undef, bb_exit_19
-   ; exit sync: R8, R5, {%11}
+  CHECK_BUFFER_LEN %25, %27, 0i, 1i, undef, exit(4)
   %29 = BUFFER_READI8 %25, %27, tbuffer
+  JUMP bb_linear_67
+bb_linear_67:
   BUFFER_WRITEI8 %25, %27, %29, tbuffer
-  %70 = BUFFER_READU8 %25, %27, tbuffer
-  BUFFER_WRITEI8 %25, %27, %70, tbuffer
-  %107 = LOAD_POINTER R2
-  CHECK_BUFFER_LEN %107, %27, 0i, 2i, %11, exit(32)
-  %111 = BUFFER_READI8 %107, %27, tbuffer
-  BUFFER_WRITEI8 %107, %27, %111, tbuffer
-  %152 = BUFFER_READU8 %107, %27, tbuffer
-  BUFFER_WRITEI8 %107, %27, %152, tbuffer
-  %191 = ADD_INT %27, 1i
-  %193 = BUFFER_READI8 %107, %191, tbuffer
-  BUFFER_WRITEI8 %107, %191, %193, tbuffer
-  %234 = BUFFER_READU8 %107, %191, tbuffer
-  BUFFER_WRITEI8 %107, %191, %234, tbuffer
-  %275 = BUFFER_READI16 %107, %27, tbuffer
-  BUFFER_WRITEI16 %107, %27, %275, tbuffer
-  %316 = BUFFER_READU16 %107, %27, tbuffer
-  BUFFER_WRITEI16 %107, %27, %316, tbuffer
+  %553 = BUFFER_READU8 %25, %27, tbuffer
+  BUFFER_WRITEI8 %25, %27, %553, tbuffer
+  %578 = LOAD_POINTER R2
+  CHECK_BUFFER_LEN %578, %27, 0i, 2i, %11, bb_exit_68
+   ; exit sync: R6, {%553}
+  %581 = BUFFER_READI8 %578, %27, tbuffer
+  BUFFER_WRITEI8 %578, %27, %581, tbuffer
+  %609 = BUFFER_READU8 %578, %27, tbuffer
+  BUFFER_WRITEI8 %578, %27, %609, tbuffer
+  %634 = ADD_INT %27, 1i
+  %636 = BUFFER_READI8 %578, %634, tbuffer
+  BUFFER_WRITEI8 %578, %634, %636, tbuffer
+  %663 = BUFFER_READU8 %578, %634, tbuffer
+  BUFFER_WRITEI8 %578, %634, %663, tbuffer
+  %691 = BUFFER_READI16 %578, %27, tbuffer
+  BUFFER_WRITEI16 %578, %27, %691, tbuffer
+  %719 = BUFFER_READU16 %578, %27, tbuffer
+  BUFFER_WRITEI16 %578, %27, %719, tbuffer
+  INTERRUPT 112u
+  RETURN R0, 0i
+bb_4:
+  CHECK_SAFE_ENV bb_fallback_7
+  CHECK_TAG R5, tnumber, exit(10)
+  CHECK_TAG R6, tnumber, exit(10)
+  %53 = LOAD_POINTER R1
+  %54 = LOAD_DOUBLE R5
+  %55 = NUM_TO_INT %54
+  CHECK_BUFFER_LEN %53, %55, 0i, 1i, undef, exit(10)
+  %57 = LOAD_DOUBLE R6
+  %58 = NUM_TO_UINT %57
+  BUFFER_WRITEI8 %53, %55, %58, tbuffer
+  JUMP bb_8
+bb_8:
+  %75 = LOAD_DOUBLE R0
+  %76 = SUB_NUM %75, 1
+  STORE_DOUBLE R5, %76
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %76
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %90 = LOAD_POINTER R1
+  %92 = NUM_TO_INT %76
+  CHECK_BUFFER_LEN %90, %92, 0i, 1i, undef, exit(18)
+  %94 = BUFFER_READU8 %90, %92, tbuffer
+  %95 = INT_TO_NUM %94
+  STORE_DOUBLE R6, %95
+  STORE_TAG R6, tnumber
+  JUMP bb_12
+bb_12:
+  CHECK_SAFE_ENV bb_fallback_15
+  CHECK_TAG R5, tnumber, exit(24)
+  CHECK_TAG R6, tnumber, exit(24)
+  %118 = LOAD_POINTER R1
+  %119 = LOAD_DOUBLE R5
+  %120 = NUM_TO_INT %119
+  CHECK_BUFFER_LEN %118, %120, 0i, 1i, undef, exit(24)
+  %122 = LOAD_DOUBLE R6
+  %123 = NUM_TO_UINT %122
+  BUFFER_WRITEI8 %118, %120, %123, tbuffer
+  JUMP bb_16
+bb_16:
+  %140 = LOAD_DOUBLE R0
+  %141 = SUB_NUM %140, 1
+  STORE_DOUBLE R5, %141
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %141
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_19
+  %155 = LOAD_POINTER R2
+  %157 = NUM_TO_INT %141
+  CHECK_BUFFER_LEN %155, %157, 0i, 1i, undef, exit(32)
+  %159 = BUFFER_READI8 %155, %157, tbuffer
+  %160 = INT_TO_NUM %159
+  STORE_DOUBLE R6, %160
+  STORE_TAG R6, tnumber
+  JUMP bb_20
+bb_20:
+  CHECK_SAFE_ENV bb_fallback_23
+  CHECK_TAG R5, tnumber, exit(38)
+  CHECK_TAG R6, tnumber, exit(38)
+  %183 = LOAD_POINTER R2
+  %184 = LOAD_DOUBLE R5
+  %185 = NUM_TO_INT %184
+  CHECK_BUFFER_LEN %183, %185, 0i, 1i, undef, exit(38)
+  %187 = LOAD_DOUBLE R6
+  %188 = NUM_TO_UINT %187
+  BUFFER_WRITEI8 %183, %185, %188, tbuffer
+  JUMP bb_24
+bb_24:
+  %205 = LOAD_DOUBLE R0
+  %206 = SUB_NUM %205, 1
+  STORE_DOUBLE R5, %206
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %206
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_27
+  %220 = LOAD_POINTER R2
+  %222 = NUM_TO_INT %206
+  CHECK_BUFFER_LEN %220, %222, 0i, 1i, undef, exit(46)
+  %224 = BUFFER_READU8 %220, %222, tbuffer
+  %225 = INT_TO_NUM %224
+  STORE_DOUBLE R6, %225
+  STORE_TAG R6, tnumber
+  JUMP bb_28
+bb_28:
+  CHECK_SAFE_ENV bb_fallback_31
+  CHECK_TAG R5, tnumber, exit(52)
+  CHECK_TAG R6, tnumber, exit(52)
+  %248 = LOAD_POINTER R2
+  %249 = LOAD_DOUBLE R5
+  %250 = NUM_TO_INT %249
+  CHECK_BUFFER_LEN %248, %250, 0i, 1i, undef, exit(52)
+  %252 = LOAD_DOUBLE R6
+  %253 = NUM_TO_UINT %252
+  BUFFER_WRITEI8 %248, %250, %253, tbuffer
+  JUMP bb_32
+bb_32:
+  %270 = LOAD_DOUBLE R0
+  STORE_DOUBLE R5, %270
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %270
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_35
+  %285 = LOAD_POINTER R2
+  %287 = NUM_TO_INT %270
+  CHECK_BUFFER_LEN %285, %287, 0i, 1i, undef, exit(60)
+  %289 = BUFFER_READI8 %285, %287, tbuffer
+  %290 = INT_TO_NUM %289
+  STORE_DOUBLE R6, %290
+  STORE_TAG R6, tnumber
+  JUMP bb_36
+bb_36:
+  CHECK_SAFE_ENV bb_fallback_39
+  CHECK_TAG R5, tnumber, exit(66)
+  CHECK_TAG R6, tnumber, exit(66)
+  %313 = LOAD_POINTER R2
+  %314 = LOAD_DOUBLE R5
+  %315 = NUM_TO_INT %314
+  CHECK_BUFFER_LEN %313, %315, 0i, 1i, undef, exit(66)
+  %317 = LOAD_DOUBLE R6
+  %318 = NUM_TO_UINT %317
+  BUFFER_WRITEI8 %313, %315, %318, tbuffer
+  JUMP bb_40
+bb_40:
+  %335 = LOAD_DOUBLE R0
+  STORE_DOUBLE R5, %335
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %335
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_43
+  %350 = LOAD_POINTER R2
+  %352 = NUM_TO_INT %335
+  CHECK_BUFFER_LEN %350, %352, 0i, 1i, undef, exit(74)
+  %354 = BUFFER_READU8 %350, %352, tbuffer
+  %355 = INT_TO_NUM %354
+  STORE_DOUBLE R6, %355
+  STORE_TAG R6, tnumber
+  JUMP bb_44
+bb_44:
+  CHECK_SAFE_ENV bb_fallback_47
+  CHECK_TAG R5, tnumber, exit(80)
+  CHECK_TAG R6, tnumber, exit(80)
+  %378 = LOAD_POINTER R2
+  %379 = LOAD_DOUBLE R5
+  %380 = NUM_TO_INT %379
+  CHECK_BUFFER_LEN %378, %380, 0i, 1i, undef, exit(80)
+  %382 = LOAD_DOUBLE R6
+  %383 = NUM_TO_UINT %382
+  BUFFER_WRITEI8 %378, %380, %383, tbuffer
+  JUMP bb_48
+bb_48:
+  %400 = LOAD_DOUBLE R0
+  %401 = SUB_NUM %400, 1
+  STORE_DOUBLE R5, %401
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %401
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_51
+  %415 = LOAD_POINTER R2
+  %417 = NUM_TO_INT %401
+  CHECK_BUFFER_LEN %415, %417, 0i, 2i, undef, exit(88)
+  %419 = BUFFER_READI16 %415, %417, tbuffer
+  %420 = INT_TO_NUM %419
+  STORE_DOUBLE R6, %420
+  STORE_TAG R6, tnumber
+  JUMP bb_52
+bb_52:
+  CHECK_SAFE_ENV bb_fallback_55
+  CHECK_TAG R5, tnumber, exit(94)
+  CHECK_TAG R6, tnumber, exit(94)
+  %443 = LOAD_POINTER R2
+  %444 = LOAD_DOUBLE R5
+  %445 = NUM_TO_INT %444
+  CHECK_BUFFER_LEN %443, %445, 0i, 2i, undef, exit(94)
+  %447 = LOAD_DOUBLE R6
+  %448 = NUM_TO_UINT %447
+  BUFFER_WRITEI16 %443, %445, %448, tbuffer
+  JUMP bb_56
+bb_56:
+  %465 = LOAD_DOUBLE R0
+  %466 = SUB_NUM %465, 1
+  STORE_DOUBLE R5, %466
+  STORE_TAG R5, tnumber
+  STORE_DOUBLE R8, %466
+  STORE_TAG R8, tnumber
+  CHECK_SAFE_ENV bb_fallback_59
+  %480 = LOAD_POINTER R2
+  %482 = NUM_TO_INT %466
+  CHECK_BUFFER_LEN %480, %482, 0i, 2i, undef, exit(102)
+  %484 = BUFFER_READU16 %480, %482, tbuffer
+  %485 = INT_TO_NUM %484
+  STORE_DOUBLE R6, %485
+  STORE_TAG R6, tnumber
+  JUMP bb_60
+bb_60:
+  CHECK_SAFE_ENV bb_fallback_63
+  CHECK_TAG R5, tnumber, exit(108)
+  CHECK_TAG R6, tnumber, exit(108)
+  %508 = LOAD_POINTER R2
+  %509 = LOAD_DOUBLE R5
+  %510 = NUM_TO_INT %509
+  CHECK_BUFFER_LEN %508, %510, 0i, 2i, undef, exit(108)
+  %512 = LOAD_DOUBLE R6
+  %513 = NUM_TO_UINT %512
+  BUFFER_WRITEI16 %508, %510, %513, tbuffer
+  JUMP bb_64
+bb_64:
   INTERRUPT 112u
   RETURN R0, 0i
 )"
@@ -5712,19 +6924,55 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %11 = LOAD_DOUBLE R1
   %13 = NUM_TO_INT %11
-  %23 = LOAD_POINTER R0
-  CHECK_BUFFER_LEN %23, %13, 0i, 8i, %11, bb_exit_6
+  JUMP bb_linear_15
+bb_linear_15:
+  %104 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %104, %13, 0i, 8i, %11, bb_exit_16
    ; exit sync: R2, {%11, %13}
-  %27 = BUFFER_READI32 %23, %13, tbuffer
-  %28 = INT_TO_NUM %27
-  %45 = ADD_INT %13, 4i
-  %47 = BUFFER_READI32 %23, %45, tbuffer
-  %48 = INT_TO_NUM %47
-  %58 = ADD_NUM %28, %48
-  STORE_SPLIT_TVALUE R2, tnumber, %58
+  %108 = BUFFER_READI32 %104, %13, tbuffer
+  %109 = INT_TO_NUM %108
+  %119 = ADD_INT %13, 4i
+  %121 = BUFFER_READI32 %104, %119, tbuffer
+  %122 = INT_TO_NUM %121
+  %132 = ADD_NUM %109, %122
+  STORE_SPLIT_TVALUE R2, tnumber, %132
+  INTERRUPT 22u
+  RETURN R2, 1i
+bb_4:
+  CHECK_SAFE_ENV bb_fallback_7
+  %37 = LOAD_POINTER R0
+  %38 = LOAD_DOUBLE R1
+  %39 = NUM_TO_INT %38
+  CHECK_BUFFER_LEN %37, %39, 0i, 4i, undef, exit(9)
+  %41 = BUFFER_READI32 %37, %39, tbuffer
+  %42 = INT_TO_NUM %41
+  STORE_DOUBLE R3, %42
+  STORE_TAG R3, tnumber
+  JUMP bb_8
+bb_8:
+  %62 = LOAD_DOUBLE R1
+  %63 = ADD_NUM %62, 4
+  STORE_DOUBLE R6, %63
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %71 = LOAD_POINTER R0
+  %73 = NUM_TO_INT %63
+  CHECK_BUFFER_LEN %71, %73, 0i, 4i, undef, exit(17)
+  %75 = BUFFER_READI32 %71, %73, tbuffer
+  %76 = INT_TO_NUM %75
+  STORE_DOUBLE R4, %76
+  STORE_TAG R4, tnumber
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R3, tnumber, exit(21)
+  CHECK_TAG R4, tnumber, exit(21)
+  %96 = LOAD_DOUBLE R3
+  %98 = ADD_NUM %96, R4
+  STORE_DOUBLE R2, %98
+  STORE_TAG R2, tnumber
   INTERRUPT 22u
   RETURN R2, 1i
 )"
@@ -5748,24 +6996,75 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   %8 = LOAD_DOUBLE R1
   %9 = MUL_NUM %8, 4
+  STORE_DOUBLE R6, %9
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   %17 = LOAD_POINTER R0
   %19 = NUM_TO_INT %9
-  CHECK_BUFFER_LEN %17, %19, 0i, 12i, %9, bb_exit_6
-   ; exit sync: R6, {%9}
+  CHECK_BUFFER_LEN %17, %19, 0i, 12i, %9, exit(3)
   %21 = BUFFER_READI32 %17, %19, tbuffer
   %22 = INT_TO_NUM %21
-  %45 = ADD_INT %19, 4i
-  %47 = BUFFER_READI32 %17, %45, tbuffer
-  %48 = INT_TO_NUM %47
-  %58 = ADD_NUM %22, %48
-  %80 = ADD_INT %19, 8i
-  %82 = BUFFER_READI32 %17, %80, tbuffer
-  %83 = INT_TO_NUM %82
-  %93 = ADD_NUM %58, %83
-  STORE_DOUBLE R2, %93
+  JUMP bb_linear_15
+bb_linear_15:
+  %143 = ADD_INT %19, 4i
+  %145 = BUFFER_READI32 %17, %143, tbuffer
+  %146 = INT_TO_NUM %145
+  %156 = ADD_NUM %22, %146
+  %168 = ADD_INT %19, 8i
+  %170 = BUFFER_READI32 %17, %168, tbuffer
+  %171 = INT_TO_NUM %170
+  %180 = ADD_NUM %156, %171
+  STORE_DOUBLE R2, %180
+  STORE_TAG R2, tnumber
+  INTERRUPT 25u
+  RETURN R2, 1i
+bb_4:
+  %40 = LOAD_DOUBLE R1
+  %41 = ADD_NUM %40, 1
+  STORE_DOUBLE R8, %41
+  STORE_TAG R8, tnumber
+  %47 = MUL_NUM %41, 4
+  STORE_DOUBLE R7, %47
+  STORE_TAG R7, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %55 = LOAD_POINTER R0
+  %57 = NUM_TO_INT %47
+  CHECK_BUFFER_LEN %55, %57, 0i, 4i, undef, exit(11)
+  %59 = BUFFER_READI32 %55, %57, tbuffer
+  %60 = INT_TO_NUM %59
+  STORE_DOUBLE R5, %60
+  STORE_TAG R5, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R4, tnumber, exit(15)
+  CHECK_TAG R5, tnumber, exit(15)
+  %80 = LOAD_DOUBLE R4
+  %82 = ADD_NUM %80, R5
+  STORE_DOUBLE R3, %82
+  STORE_TAG R3, tnumber
+  %87 = LOAD_DOUBLE R1
+  %88 = ADD_NUM %87, 2
+  STORE_DOUBLE R7, %88
+  STORE_TAG R7, tnumber
+  %94 = MUL_NUM %88, 4
+  STORE_DOUBLE R6, %94
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %102 = LOAD_POINTER R0
+  %104 = NUM_TO_INT %94
+  CHECK_BUFFER_LEN %102, %104, 0i, 4i, undef, exit(20)
+  %106 = BUFFER_READI32 %102, %104, tbuffer
+  %107 = INT_TO_NUM %106
+  STORE_DOUBLE R4, %107
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R3, tnumber, exit(24)
+  CHECK_TAG R4, tnumber, exit(24)
+  %127 = LOAD_DOUBLE R3
+  %129 = ADD_NUM %127, R4
+  STORE_DOUBLE R2, %129
   STORE_TAG R2, tnumber
   INTERRUPT 25u
   RETURN R2, 1i
@@ -5791,24 +7090,42 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   %8 = LOAD_DOUBLE R1
   %9 = MUL_NUM %8, 4
+  STORE_DOUBLE R5, %9
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   %17 = LOAD_POINTER R0
   %19 = NUM_TO_INT %9
-  CHECK_BUFFER_LEN %17, %19, 0i, 4i, undef, bb_exit_5
-   ; exit sync: R5, {%9}
+  CHECK_BUFFER_LEN %17, %19, 0i, 4i, undef, exit(3)
   %21 = BUFFER_READI32 %17, %19, tbuffer
   %22 = INT_TO_NUM %21
-  %29 = ADD_NUM %8, 1
-  %35 = MUL_NUM %29, 8
-  %45 = NUM_TO_INT %35
-  CHECK_BUFFER_LEN %17, %45, 0i, 4i, undef, bb_exit_6
-   ; exit sync: R7, R6, R3, {%29, %35, %22}
-  %47 = BUFFER_READI32 %17, %45, tbuffer
-  %48 = INT_TO_NUM %47
-  %58 = ADD_NUM %22, %48
-  STORE_DOUBLE R2, %58
+  STORE_DOUBLE R3, %22
+  STORE_TAG R3, tnumber
+  JUMP bb_4
+bb_4:
+  %40 = LOAD_DOUBLE R1
+  %41 = ADD_NUM %40, 1
+  STORE_DOUBLE R7, %41
+  STORE_TAG R7, tnumber
+  %47 = MUL_NUM %41, 8
+  STORE_DOUBLE R6, %47
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %55 = LOAD_POINTER R0
+  %57 = NUM_TO_INT %47
+  CHECK_BUFFER_LEN %55, %57, 0i, 4i, undef, exit(11)
+  %59 = BUFFER_READI32 %55, %57, tbuffer
+  %60 = INT_TO_NUM %59
+  STORE_DOUBLE R4, %60
+  STORE_TAG R4, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R3, tnumber, exit(15)
+  CHECK_TAG R4, tnumber, exit(15)
+  %80 = LOAD_DOUBLE R3
+  %82 = ADD_NUM %80, R4
+  STORE_DOUBLE R2, %82
   STORE_TAG R2, tnumber
   INTERRUPT 16u
   RETURN R2, 1i
@@ -5837,21 +7154,94 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %9 = LOAD_DOUBLE R1
   %10 = NUM_TO_UINT %9
-  %27 = ADD_INT %10, 8i
-  %44 = ADD_INT %10, 16i
-  %56 = LOAD_POINTER R0
-  %58 = TRUNCATE_UINT %10
-  CHECK_BUFFER_LEN %56, %58, 0i, 24i, undef, bb_exit_9
-   ; exit sync: R4, R3, R2, {%44, %27, %10}
-  %60 = BUFFER_READF64 %56, %58, tbuffer
-  %73 = BUFFER_READF64 %56, %27, tbuffer
-  %83 = ADD_NUM %60, %73
-  %95 = BUFFER_READF64 %56, %44, tbuffer
-  %105 = ADD_NUM %83, %95
-  STORE_SPLIT_TVALUE R5, tnumber, %105
+  JUMP bb_linear_27
+bb_linear_27:
+  %197 = ADD_INT %10, 8i
+  %209 = ADD_INT %10, 16i
+  %217 = LOAD_POINTER R0
+  %219 = TRUNCATE_UINT %10
+  CHECK_BUFFER_LEN %217, %219, 0i, 24i, undef, bb_exit_28
+   ; exit sync: R5, R4, R3, R2, {%209, %197, %10}
+  %221 = BUFFER_READF64 %217, %219, tbuffer
+  %232 = BUFFER_READF64 %217, %197, tbuffer
+  %242 = ADD_NUM %221, %232
+  %252 = BUFFER_READF64 %217, %209, tbuffer
+  %261 = ADD_NUM %242, %252
+  STORE_SPLIT_TVALUE R5, tnumber, %261
+  INTERRUPT 44u
+  RETURN R5, 1i
+bb_4:
+  CHECK_TAG R2, tnumber, exit(7)
+  %33 = LOAD_DOUBLE R2
+  %34 = ADD_NUM %33, 8
+  STORE_DOUBLE R4, %34
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %41 = NUM_TO_UINT %34
+  %44 = UINT_TO_NUM %41
+  STORE_DOUBLE R3, %44
+  STORE_TAG R3, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R2, tnumber, exit(14)
+  %62 = LOAD_DOUBLE R2
+  %63 = ADD_NUM %62, 16
+  STORE_DOUBLE R5, %63
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %70 = NUM_TO_UINT %63
+  %73 = UINT_TO_NUM %70
+  STORE_DOUBLE R4, %73
+  STORE_TAG R4, tnumber
+  JUMP bb_12
+bb_12:
+  CHECK_SAFE_ENV bb_fallback_15
+  CHECK_TAG R2, tnumber, exit(23)
+  %94 = LOAD_POINTER R0
+  %95 = LOAD_DOUBLE R2
+  %96 = NUM_TO_INT %95
+  CHECK_BUFFER_LEN %94, %96, 0i, 8i, undef, exit(23)
+  %98 = BUFFER_READF64 %94, %96, tbuffer
+  STORE_DOUBLE R7, %98
+  STORE_TAG R7, tnumber
+  JUMP bb_16
+bb_16:
+  CHECK_SAFE_ENV bb_fallback_19
+  CHECK_TAG R3, tnumber, exit(30)
+  %121 = LOAD_POINTER R0
+  %122 = LOAD_DOUBLE R3
+  %123 = NUM_TO_INT %122
+  CHECK_BUFFER_LEN %121, %123, 0i, 8i, undef, exit(30)
+  %125 = BUFFER_READF64 %121, %123, tbuffer
+  STORE_DOUBLE R8, %125
+  STORE_TAG R8, tnumber
+  JUMP bb_20
+bb_20:
+  CHECK_TAG R7, tnumber, exit(35)
+  CHECK_TAG R8, tnumber, exit(35)
+  %147 = LOAD_DOUBLE R7
+  %149 = ADD_NUM %147, R8
+  STORE_DOUBLE R6, %149
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_23
+  CHECK_TAG R4, tnumber, exit(38)
+  %157 = LOAD_POINTER R0
+  %158 = LOAD_DOUBLE R4
+  %159 = NUM_TO_INT %158
+  CHECK_BUFFER_LEN %157, %159, 0i, 8i, undef, exit(38)
+  %161 = BUFFER_READF64 %157, %159, tbuffer
+  STORE_DOUBLE R7, %161
+  JUMP bb_24
+bb_24:
+  CHECK_TAG R6, tnumber, exit(43)
+  CHECK_TAG R7, tnumber, exit(43)
+  %183 = LOAD_DOUBLE R6
+  %185 = ADD_NUM %183, R7
+  STORE_DOUBLE R5, %185
+  STORE_TAG R5, tnumber
   INTERRUPT 44u
   RETURN R5, 1i
 )"
@@ -5875,21 +7265,64 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %11 = LOAD_POINTER R0
   %12 = LOAD_DOUBLE R1
   %13 = NUM_TO_INT %12
   CHECK_BUFFER_LEN %11, %13, -1i, 7i, %12, exit(2)
   %15 = BUFFER_READI8 %11, %13, tbuffer
   %16 = INT_TO_NUM %15
-  %33 = ADD_INT %13, 4i
-  %35 = BUFFER_READI8 %11, %33, tbuffer
-  %36 = INT_TO_NUM %35
-  %46 = ADD_NUM %16, %36
-  %62 = ADD_INT %13, -1i
-  %64 = BUFFER_READF64 %11, %62, tbuffer
-  %74 = ADD_NUM %46, %64
-  STORE_DOUBLE R2, %74
+  JUMP bb_linear_15
+bb_linear_15:
+  %123 = ADD_INT %13, 4i
+  %125 = BUFFER_READI8 %11, %123, tbuffer
+  %126 = INT_TO_NUM %125
+  %136 = ADD_NUM %16, %126
+  %145 = ADD_INT %13, -1i
+  %147 = BUFFER_READF64 %11, %145, tbuffer
+  %156 = ADD_NUM %136, %147
+  STORE_DOUBLE R2, %156
+  STORE_TAG R2, tnumber
+  INTERRUPT 23u
+  RETURN R2, 1i
+bb_4:
+  %36 = LOAD_DOUBLE R1
+  %37 = ADD_NUM %36, 4
+  STORE_DOUBLE R7, %37
+  STORE_TAG R7, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %45 = LOAD_POINTER R0
+  %47 = NUM_TO_INT %37
+  CHECK_BUFFER_LEN %45, %47, 0i, 1i, undef, exit(10)
+  %49 = BUFFER_READI8 %45, %47, tbuffer
+  %50 = INT_TO_NUM %49
+  STORE_DOUBLE R5, %50
+  STORE_TAG R5, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R4, tnumber, exit(14)
+  CHECK_TAG R5, tnumber, exit(14)
+  %70 = LOAD_DOUBLE R4
+  %72 = ADD_NUM %70, R5
+  STORE_DOUBLE R3, %72
+  STORE_TAG R3, tnumber
+  %77 = LOAD_DOUBLE R1
+  %78 = SUB_NUM %77, 1
+  STORE_DOUBLE R6, %78
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %86 = LOAD_POINTER R0
+  %88 = NUM_TO_INT %78
+  CHECK_BUFFER_LEN %86, %88, 0i, 8i, undef, exit(18)
+  %90 = BUFFER_READF64 %86, %88, tbuffer
+  STORE_DOUBLE R4, %90
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R3, tnumber, exit(22)
+  CHECK_TAG R4, tnumber, exit(22)
+  %110 = LOAD_DOUBLE R3
+  %112 = ADD_NUM %110, R4
+  STORE_DOUBLE R2, %112
   STORE_TAG R2, tnumber
   INTERRUPT 23u
   RETURN R2, 1i
@@ -5933,18 +7366,25 @@ bb_bytecode_1:
   %14 = ADD_NUM %12, R3
   STORE_DOUBLE R11, %14
   STORE_TAG R11, tnumber
-  JUMP bb_linear_11
-bb_linear_11:
+  JUMP bb_linear_17
+bb_linear_17:
   CHECK_TAG R4, tnumber, bb_fallback_5
-  %93 = ADD_NUM %14, R4
-  STORE_DOUBLE R10, %93
+  %119 = ADD_NUM %14, R4
+  STORE_DOUBLE R10, %119
   STORE_TAG R10, tnumber
   CHECK_TAG R5, tnumber, bb_fallback_7
-  %103 = ADD_NUM %93, R5
-  STORE_DOUBLE R9, %103
+  %129 = ADD_NUM %119, R5
+  STORE_DOUBLE R9, %129
   STORE_TAG R9, tnumber
-  CHECK_SAFE_ENV exit(4)
-  JUMP exit(6)
+  CHECK_SAFE_ENV bb_fallback_9
+  %136 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %136, 0i, 0i, 1i, undef, exit(6)
+  %141 = NUM_TO_UINT %129
+  BUFFER_WRITEI8 %136, 0i, %141, tbuffer
+  STORE_DOUBLE R8, -4
+  STORE_TAG R8, tnumber
+  STORE_DOUBLE R9, 0
+  JUMP exit(15)
 bb_4:
   CHECK_TAG R11, tnumber, bb_fallback_5
   CHECK_TAG R4, tnumber, bb_fallback_5
@@ -5962,17 +7402,31 @@ bb_6:
   STORE_TAG R9, tnumber
   JUMP bb_8
 bb_8:
-  implicit CHECK_SAFE_ENV exit(4)
+  CHECK_SAFE_ENV bb_fallback_9
   CHECK_TAG R9, tnumber, exit(6)
   %54 = LOAD_POINTER R0
   %55 = LOAD_DOUBLE R1
   %56 = NUM_TO_INT %55
-  CHECK_BUFFER_LEN %54, %56, -4i, 1i, %55, exit(6)
+  CHECK_BUFFER_LEN %54, %56, 0i, 1i, undef, exit(6)
   %58 = LOAD_DOUBLE R9
   %59 = NUM_TO_UINT %58
   BUFFER_WRITEI8 %54, %56, %59, tbuffer
-  %79 = ADD_INT %56, -4i
-  BUFFER_WRITEI8 %54, %79, 0i, tbuffer
+  JUMP bb_10
+bb_10:
+  CHECK_TAG R1, tnumber, exit(11)
+  %78 = LOAD_DOUBLE R1
+  %79 = SUB_NUM %78, 4
+  STORE_DOUBLE R8, %79
+  STORE_TAG R8, tnumber
+  STORE_DOUBLE R9, 0
+  STORE_TAG R9, tnumber
+  CHECK_SAFE_ENV bb_fallback_13
+  %91 = LOAD_POINTER R0
+  %93 = NUM_TO_INT %79
+  CHECK_BUFFER_LEN %91, %93, 0i, 1i, undef, exit(15)
+  BUFFER_WRITEI8 %91, %93, 0i, tbuffer
+  JUMP bb_14
+bb_14:
   INTERRUPT 19u
   RETURN R0, 0i
 )"
@@ -5999,25 +7453,37 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   %14 = LOAD_DOUBLE R1
   %16 = MUL_NUM %14, R2
+  STORE_DOUBLE R6, %16
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   %24 = LOAD_POINTER R0
   %26 = NUM_TO_INT %16
-  CHECK_BUFFER_LEN %24, %26, 0i, 1i, undef, bb_exit_5
-   ; exit sync: R6, {%16}
+  CHECK_BUFFER_LEN %24, %26, 0i, 1i, undef, exit(3)
   %28 = BUFFER_READU8 %24, %26, tbuffer
   %29 = INT_TO_NUM %28
   STORE_DOUBLE R4, %29
   STORE_TAG R4, tnumber
-  %48 = ADD_NUM %16, R3
-  %58 = NUM_TO_INT %48
-  CHECK_BUFFER_LEN %24, %58, 0i, 1i, undef, bb_exit_6
-   ; exit sync: R8, R7, {%16, %48}
-  %60 = BUFFER_READU8 %24, %58, tbuffer
-  %61 = INT_TO_NUM %60
-  STORE_DOUBLE R5, %61
+  JUMP bb_4
+bb_4:
+  %49 = LOAD_DOUBLE R1
+  %51 = MUL_NUM %49, R2
+  STORE_DOUBLE R8, %51
+  STORE_TAG R8, tnumber
+  %60 = ADD_NUM %51, R3
+  STORE_DOUBLE R7, %60
+  STORE_TAG R7, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %68 = LOAD_POINTER R0
+  %70 = NUM_TO_INT %60
+  CHECK_BUFFER_LEN %68, %70, 0i, 1i, undef, exit(11)
+  %72 = BUFFER_READU8 %68, %70, tbuffer
+  %73 = INT_TO_NUM %72
+  STORE_DOUBLE R5, %73
   STORE_TAG R5, tnumber
+  JUMP bb_8
+bb_8:
   INTERRUPT 15u
   RETURN R4, 2i
 )"
@@ -6050,24 +7516,38 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   %16 = LOAD_DOUBLE R1
-  %17 = LOAD_DOUBLE R2
+  %18 = MUL_NUM %16, R2
+  STORE_DOUBLE R5, %18
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   %26 = LOAD_POINTER R0
   %27 = LOAD_DOUBLE R3
   %28 = NUM_TO_INT %27
-  CHECK_BUFFER_LEN %26, %28, 0i, 4i, undef, bb_exit_5
-   ; exit sync: R5, {%16, %17}
+  CHECK_BUFFER_LEN %26, %28, 0i, 4i, undef, exit(3)
   %30 = BUFFER_READI32 %26, %28, tbuffer
   %31 = INT_TO_NUM %30
-  %41 = LOAD_DOUBLE R4
-  %42 = NUM_TO_INT %41
-  CHECK_BUFFER_LEN %26, %42, 0i, 4i, undef, bb_exit_6
-   ; exit sync: R6, R5, {%31, %16, %17}
-  %44 = BUFFER_READI32 %26, %42, tbuffer
-  %45 = INT_TO_NUM %44
-  %55 = ADD_NUM %31, %45
-  STORE_SPLIT_TVALUE R5, tnumber, %55
+  STORE_DOUBLE R6, %31
+  STORE_TAG R6, tnumber
+  JUMP bb_4
+bb_4:
+  CHECK_SAFE_ENV bb_fallback_7
+  %54 = LOAD_POINTER R0
+  %55 = LOAD_DOUBLE R4
+  %56 = NUM_TO_INT %55
+  CHECK_BUFFER_LEN %54, %56, 0i, 4i, undef, exit(10)
+  %58 = BUFFER_READI32 %54, %56, tbuffer
+  %59 = INT_TO_NUM %58
+  STORE_DOUBLE R7, %59
+  STORE_TAG R7, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R6, tnumber, exit(15)
+  CHECK_TAG R7, tnumber, exit(15)
+  %81 = LOAD_DOUBLE R6
+  %83 = ADD_NUM %81, R7
+  STORE_DOUBLE R5, %83
+  STORE_TAG R5, tnumber
   INTERRUPT 16u
   RETURN R5, 1i
 )"
@@ -6100,42 +7580,45 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  STORE_DOUBLE R3, 0
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, 3.1400000000000001
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   %15 = LOAD_POINTER R0
-  CHECK_BUFFER_LEN %15, 0i, 0i, 8i, undef, bb_exit_12
-   ; exit sync: R4, R3, {}
+  CHECK_BUFFER_LEN %15, 0i, 0i, 8i, undef, exit(4)
   BUFFER_WRITEF64 %15, 0i, 3.1400000000000001, tbuffer
-  STORE_SPLIT_TVALUE R3, tnumber, 4
-  STORE_SPLIT_TVALUE R4, tnumber, 170
+  JUMP bb_linear_23
+bb_linear_23:
+  STORE_DOUBLE R3, 4
+  STORE_DOUBLE R4, 170
   SET_SAVEDPC 12u
-  %28 = INVOKE_FASTCALL 67u, R1, R0, R3, R4, 3i, 1i
-  CHECK_FASTCALL_RES %28, bb_fallback_4
-  JUMP bb_linear_11
-bb_linear_11:
+  %132 = INVOKE_FASTCALL 67u, R1, R0, R3, R4, 3i, 1i
+  CHECK_FASTCALL_RES %132, bb_fallback_7
   STORE_DOUBLE R4, 5
   STORE_TAG R4, tnumber
   STORE_DOUBLE R5, 187
   STORE_TAG R5, tnumber
   SET_SAVEDPC 20u
-  %97 = INVOKE_FASTCALL 67u, R2, R0, R4, R5, 3i, 1i
-  CHECK_FASTCALL_RES %97, bb_fallback_6
+  %141 = INVOKE_FASTCALL 67u, R2, R0, R4, R5, 3i, 1i
+  CHECK_FASTCALL_RES %141, bb_fallback_11
   STORE_DOUBLE R5, 0
   STORE_TAG R5, tnumber
   STORE_DOUBLE R6, 255
   STORE_TAG R6, tnumber
   SET_SAVEDPC 28u
-  %106 = INVOKE_FASTCALL 67u, R3, R0, R5, R6, 3i, 1i
-  CHECK_FASTCALL_RES %106, bb_fallback_8
+  %150 = INVOKE_FASTCALL 67u, R3, R0, R5, R6, 3i, 1i
+  CHECK_FASTCALL_RES %150, bb_fallback_15
   CHECK_BUFFER_LEN %15, 0i, 0i, 8i, undef, exit(34)
-  %112 = BUFFER_READF64 %15, 0i, tbuffer
-  STORE_DOUBLE R4, %112
+  %156 = BUFFER_READF64 %15, 0i, tbuffer
+  STORE_DOUBLE R4, %156
   STORE_TAG R4, tnumber
-  %115 = LOAD_TVALUE R1
-  STORE_TVALUE R5, %115
-  %117 = LOAD_TVALUE R2
-  STORE_TVALUE R6, %117
-  %119 = LOAD_TVALUE R3
-  STORE_TVALUE R7, %119
+  %160 = LOAD_TVALUE R1
+  STORE_TVALUE R5, %160
+  %162 = LOAD_TVALUE R2
+  STORE_TVALUE R6, %162
+  %164 = LOAD_TVALUE R3
+  STORE_TVALUE R7, %164
   INTERRUPT 42u
   RETURN R4, 4i
 )"
@@ -6162,25 +7645,97 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %9 = LOAD_DOUBLE R0
   %10 = NUM_TO_UINT %9
-  %20 = LOAD_DOUBLE R1
-  %21 = NUM_TO_UINT %20
-  %41 = ADD_INT %10, %21
-  %43 = BITAND_UINT %41, 65535i
-  %44 = UINT_TO_NUM %43
-  STORE_DOUBLE R2, %44
+  JUMP bb_linear_31
+bb_linear_31:
+  %199 = LOAD_DOUBLE R1
+  %200 = NUM_TO_UINT %199
+  %215 = ADD_INT %10, %200
+  %216 = BITAND_UINT %215, 65535i
+  %217 = UINT_TO_NUM %216
+  STORE_DOUBLE R2, %217
   STORE_TAG R2, tnumber
-  %69 = ADD_INT %43, 127i
+  %237 = ADD_INT %216, 127i
+  %238 = BITAND_UINT %237, 65535i
+  %239 = UINT_TO_NUM %238
+  STORE_SPLIT_TVALUE R3, tnumber, %239
+  %248 = BITOR_UINT %216, 1i
+  %260 = ADD_INT %248, 254i
+  %261 = BITAND_UINT %260, 65535i
+  %262 = UINT_TO_NUM %261
+  STORE_SPLIT_TVALUE R4, tnumber, %262
+  INTERRUPT 49u
+  RETURN R2, 3i
+bb_4:
+  CHECK_SAFE_ENV bb_fallback_7
+  %34 = LOAD_DOUBLE R1
+  %35 = NUM_TO_UINT %34
+  %38 = UINT_TO_NUM %35
+  STORE_DOUBLE R5, %38
+  STORE_TAG R5, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R4, tnumber, exit(14)
+  CHECK_TAG R5, tnumber, exit(14)
+  %60 = LOAD_DOUBLE R4
+  %62 = ADD_NUM %60, R5
+  STORE_DOUBLE R3, %62
+  STORE_TAG R3, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %69 = NUM_TO_UINT %62
   %71 = BITAND_UINT %69, 65535i
   %72 = UINT_TO_NUM %71
-  STORE_SPLIT_TVALUE R3, tnumber, %72
-  %82 = BITOR_UINT %43, 1i
-  %97 = ADD_INT %82, 254i
-  %99 = BITAND_UINT %97, 65535i
-  %100 = UINT_TO_NUM %99
-  STORE_SPLIT_TVALUE R4, tnumber, %100
+  STORE_DOUBLE R2, %72
+  STORE_TAG R2, tnumber
+  JUMP bb_12
+bb_12:
+  CHECK_SAFE_ENV bb_fallback_15
+  CHECK_TAG R2, tnumber, exit(23)
+  %91 = LOAD_DOUBLE R2
+  %92 = NUM_TO_UINT %91
+  %95 = UINT_TO_NUM %92
+  STORE_DOUBLE R5, %95
+  STORE_TAG R5, tnumber
+  JUMP bb_16
+bb_16:
+  CHECK_TAG R5, tnumber, exit(28)
+  %115 = LOAD_DOUBLE R5
+  %116 = ADD_NUM %115, 127
+  STORE_DOUBLE R4, %116
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_19
+  %123 = NUM_TO_UINT %116
+  %125 = BITAND_UINT %123, 65535i
+  %126 = UINT_TO_NUM %125
+  STORE_DOUBLE R3, %126
+  STORE_TAG R3, tnumber
+  JUMP bb_20
+bb_20:
+  CHECK_SAFE_ENV bb_fallback_23
+  CHECK_TAG R2, tnumber, exit(37)
+  %145 = LOAD_DOUBLE R2
+  %146 = NUM_TO_UINT %145
+  %148 = BITOR_UINT %146, 1i
+  %149 = UINT_TO_NUM %148
+  STORE_DOUBLE R6, %149
+  STORE_TAG R6, tnumber
+  JUMP bb_24
+bb_24:
+  CHECK_TAG R6, tnumber, exit(42)
+  %169 = LOAD_DOUBLE R6
+  %170 = ADD_NUM %169, 254
+  STORE_DOUBLE R5, %170
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_27
+  %177 = NUM_TO_UINT %170
+  %179 = BITAND_UINT %177, 65535i
+  %180 = UINT_TO_NUM %179
+  STORE_DOUBLE R4, %180
+  STORE_TAG R4, tnumber
+  JUMP bb_28
+bb_28:
   INTERRUPT 49u
   RETURN R2, 3i
 )"
@@ -6207,28 +7762,91 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %9 = LOAD_DOUBLE R0
   %10 = NUM_TO_UINT %9
   %13 = UINT_TO_NUM %10
-  %20 = ADD_NUM %13, 0.75
-  %27 = NUM_TO_UINT %20
-  %29 = BITAND_UINT %27, 65535i
-  %30 = UINT_TO_NUM %29
-  STORE_DOUBLE R2, %30
+  JUMP bb_linear_27
+bb_linear_27:
+  %173 = ADD_NUM %13, 0.75
+  %177 = NUM_TO_UINT %173
+  %178 = BITAND_UINT %177, 65535i
+  %179 = UINT_TO_NUM %178
+  STORE_DOUBLE R2, %179
   STORE_TAG R2, tnumber
-  %48 = ADD_NUM %30, 1e+30
-  %55 = NUM_TO_UINT %48
-  %57 = BITAND_UINT %55, 65535i
-  %58 = UINT_TO_NUM %57
-  STORE_SPLIT_TVALUE R3, tnumber, %58
-  %68 = BITOR_UINT %29, 1i
-  %69 = UINT_TO_NUM %68
-  %76 = ADD_NUM %69, 1e+30
-  %83 = NUM_TO_UINT %76
-  %85 = BITAND_UINT %83, 65535i
-  %86 = UINT_TO_NUM %85
-  STORE_SPLIT_TVALUE R4, tnumber, %86
+  %195 = ADD_NUM %179, 1e+30
+  %199 = NUM_TO_UINT %195
+  %200 = BITAND_UINT %199, 65535i
+  %201 = UINT_TO_NUM %200
+  STORE_SPLIT_TVALUE R3, tnumber, %201
+  %210 = BITOR_UINT %178, 1i
+  %211 = UINT_TO_NUM %210
+  %218 = ADD_NUM %211, 1e+30
+  %222 = NUM_TO_UINT %218
+  %223 = BITAND_UINT %222, 65535i
+  %224 = UINT_TO_NUM %223
+  STORE_SPLIT_TVALUE R4, tnumber, %224
+  INTERRUPT 42u
+  RETURN R2, 3i
+bb_4:
+  CHECK_TAG R4, tnumber, exit(7)
+  %33 = LOAD_DOUBLE R4
+  %34 = ADD_NUM %33, 0.75
+  STORE_DOUBLE R3, %34
+  STORE_TAG R3, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %41 = NUM_TO_UINT %34
+  %43 = BITAND_UINT %41, 65535i
+  %44 = UINT_TO_NUM %43
+  STORE_DOUBLE R2, %44
+  STORE_TAG R2, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_SAFE_ENV bb_fallback_11
+  CHECK_TAG R2, tnumber, exit(16)
+  %63 = LOAD_DOUBLE R2
+  %64 = NUM_TO_UINT %63
+  %67 = UINT_TO_NUM %64
+  STORE_DOUBLE R5, %67
+  STORE_TAG R5, tnumber
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R5, tnumber, exit(21)
+  %87 = LOAD_DOUBLE R5
+  %88 = ADD_NUM %87, 1e+30
+  STORE_DOUBLE R4, %88
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_15
+  %95 = NUM_TO_UINT %88
+  %97 = BITAND_UINT %95, 65535i
+  %98 = UINT_TO_NUM %97
+  STORE_DOUBLE R3, %98
+  STORE_TAG R3, tnumber
+  JUMP bb_16
+bb_16:
+  CHECK_SAFE_ENV bb_fallback_19
+  CHECK_TAG R2, tnumber, exit(30)
+  %117 = LOAD_DOUBLE R2
+  %118 = NUM_TO_UINT %117
+  %120 = BITOR_UINT %118, 1i
+  %121 = UINT_TO_NUM %120
+  STORE_DOUBLE R6, %121
+  STORE_TAG R6, tnumber
+  JUMP bb_20
+bb_20:
+  CHECK_TAG R6, tnumber, exit(35)
+  %141 = LOAD_DOUBLE R6
+  %142 = ADD_NUM %141, 1e+30
+  STORE_DOUBLE R5, %142
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_23
+  %149 = NUM_TO_UINT %142
+  %151 = BITAND_UINT %149, 65535i
+  %152 = UINT_TO_NUM %151
+  STORE_DOUBLE R4, %152
+  STORE_TAG R4, tnumber
+  JUMP bb_24
+bb_24:
   INTERRUPT 42u
   RETURN R2, 3i
 )"
@@ -6255,25 +7873,96 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %9 = LOAD_DOUBLE R0
   %10 = NUM_TO_UINT %9
-  %20 = LOAD_DOUBLE R1
-  %21 = NUM_TO_UINT %20
-  %41 = SUB_INT %10, %21
-  %43 = BITAND_UINT %41, 65535i
-  %44 = UINT_TO_NUM %43
-  STORE_DOUBLE R2, %44
+  JUMP bb_linear_31
+bb_linear_31:
+  %199 = LOAD_DOUBLE R1
+  %200 = NUM_TO_UINT %199
+  %215 = SUB_INT %10, %200
+  %216 = BITAND_UINT %215, 65535i
+  %217 = UINT_TO_NUM %216
+  STORE_DOUBLE R2, %217
   STORE_TAG R2, tnumber
-  %69 = SUB_INT %43, 127i
+  %237 = SUB_INT %216, 127i
+  %238 = BITAND_UINT %237, 65535i
+  %239 = UINT_TO_NUM %238
+  STORE_SPLIT_TVALUE R3, tnumber, %239
+  %248 = BITOR_UINT %216, 1i
+  %260 = SUB_INT 254i, %248
+  %261 = BITAND_UINT %260, 65535i
+  %262 = UINT_TO_NUM %261
+  STORE_SPLIT_TVALUE R4, tnumber, %262
+  INTERRUPT 49u
+  RETURN R2, 3i
+bb_4:
+  CHECK_SAFE_ENV bb_fallback_7
+  %34 = LOAD_DOUBLE R1
+  %35 = NUM_TO_UINT %34
+  %38 = UINT_TO_NUM %35
+  STORE_DOUBLE R5, %38
+  STORE_TAG R5, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R4, tnumber, exit(14)
+  CHECK_TAG R5, tnumber, exit(14)
+  %60 = LOAD_DOUBLE R4
+  %62 = SUB_NUM %60, R5
+  STORE_DOUBLE R3, %62
+  STORE_TAG R3, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %69 = NUM_TO_UINT %62
   %71 = BITAND_UINT %69, 65535i
   %72 = UINT_TO_NUM %71
-  STORE_SPLIT_TVALUE R3, tnumber, %72
-  %82 = BITOR_UINT %43, 1i
-  %97 = SUB_INT 254i, %82
-  %99 = BITAND_UINT %97, 65535i
-  %100 = UINT_TO_NUM %99
-  STORE_SPLIT_TVALUE R4, tnumber, %100
+  STORE_DOUBLE R2, %72
+  STORE_TAG R2, tnumber
+  JUMP bb_12
+bb_12:
+  CHECK_SAFE_ENV bb_fallback_15
+  CHECK_TAG R2, tnumber, exit(23)
+  %91 = LOAD_DOUBLE R2
+  %92 = NUM_TO_UINT %91
+  %95 = UINT_TO_NUM %92
+  STORE_DOUBLE R5, %95
+  STORE_TAG R5, tnumber
+  JUMP bb_16
+bb_16:
+  CHECK_TAG R5, tnumber, exit(28)
+  %115 = LOAD_DOUBLE R5
+  %116 = SUB_NUM %115, 127
+  STORE_DOUBLE R4, %116
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_19
+  %123 = NUM_TO_UINT %116
+  %125 = BITAND_UINT %123, 65535i
+  %126 = UINT_TO_NUM %125
+  STORE_DOUBLE R3, %126
+  STORE_TAG R3, tnumber
+  JUMP bb_20
+bb_20:
+  CHECK_SAFE_ENV bb_fallback_23
+  CHECK_TAG R2, tnumber, exit(37)
+  %145 = LOAD_DOUBLE R2
+  %146 = NUM_TO_UINT %145
+  %148 = BITOR_UINT %146, 1i
+  %149 = UINT_TO_NUM %148
+  STORE_DOUBLE R6, %149
+  STORE_TAG R6, tnumber
+  JUMP bb_24
+bb_24:
+  CHECK_TAG R6, tnumber, exit(42)
+  %170 = SUB_NUM 254, R6
+  STORE_DOUBLE R5, %170
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_27
+  %177 = NUM_TO_UINT %170
+  %179 = BITAND_UINT %177, 65535i
+  %180 = UINT_TO_NUM %179
+  STORE_DOUBLE R4, %180
+  STORE_TAG R4, tnumber
+  JUMP bb_28
+bb_28:
   INTERRUPT 49u
   RETURN R2, 3i
 )"
@@ -6300,28 +7989,90 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %9 = LOAD_DOUBLE R0
   %10 = NUM_TO_UINT %9
   %13 = UINT_TO_NUM %10
-  %20 = SUB_NUM %13, 0.75
-  %27 = NUM_TO_UINT %20
-  %29 = BITAND_UINT %27, 65535i
-  %30 = UINT_TO_NUM %29
-  STORE_DOUBLE R2, %30
+  JUMP bb_linear_27
+bb_linear_27:
+  %173 = SUB_NUM %13, 0.75
+  %177 = NUM_TO_UINT %173
+  %178 = BITAND_UINT %177, 65535i
+  %179 = UINT_TO_NUM %178
+  STORE_DOUBLE R2, %179
   STORE_TAG R2, tnumber
-  %48 = SUB_NUM %30, 1e+30
-  %55 = NUM_TO_UINT %48
-  %57 = BITAND_UINT %55, 65535i
-  %58 = UINT_TO_NUM %57
-  STORE_SPLIT_TVALUE R3, tnumber, %58
-  %68 = BITOR_UINT %29, 1i
-  %69 = UINT_TO_NUM %68
-  %76 = SUB_NUM 1e+30, %69
-  %83 = NUM_TO_UINT %76
-  %85 = BITAND_UINT %83, 65535i
-  %86 = UINT_TO_NUM %85
-  STORE_SPLIT_TVALUE R4, tnumber, %86
+  %195 = SUB_NUM %179, 1e+30
+  %199 = NUM_TO_UINT %195
+  %200 = BITAND_UINT %199, 65535i
+  %201 = UINT_TO_NUM %200
+  STORE_SPLIT_TVALUE R3, tnumber, %201
+  %210 = BITOR_UINT %178, 1i
+  %211 = UINT_TO_NUM %210
+  %218 = SUB_NUM 1e+30, %211
+  %222 = NUM_TO_UINT %218
+  %223 = BITAND_UINT %222, 65535i
+  %224 = UINT_TO_NUM %223
+  STORE_SPLIT_TVALUE R4, tnumber, %224
+  INTERRUPT 42u
+  RETURN R2, 3i
+bb_4:
+  CHECK_TAG R4, tnumber, exit(7)
+  %33 = LOAD_DOUBLE R4
+  %34 = SUB_NUM %33, 0.75
+  STORE_DOUBLE R3, %34
+  STORE_TAG R3, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %41 = NUM_TO_UINT %34
+  %43 = BITAND_UINT %41, 65535i
+  %44 = UINT_TO_NUM %43
+  STORE_DOUBLE R2, %44
+  STORE_TAG R2, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_SAFE_ENV bb_fallback_11
+  CHECK_TAG R2, tnumber, exit(16)
+  %63 = LOAD_DOUBLE R2
+  %64 = NUM_TO_UINT %63
+  %67 = UINT_TO_NUM %64
+  STORE_DOUBLE R5, %67
+  STORE_TAG R5, tnumber
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R5, tnumber, exit(21)
+  %87 = LOAD_DOUBLE R5
+  %88 = SUB_NUM %87, 1e+30
+  STORE_DOUBLE R4, %88
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_15
+  %95 = NUM_TO_UINT %88
+  %97 = BITAND_UINT %95, 65535i
+  %98 = UINT_TO_NUM %97
+  STORE_DOUBLE R3, %98
+  STORE_TAG R3, tnumber
+  JUMP bb_16
+bb_16:
+  CHECK_SAFE_ENV bb_fallback_19
+  CHECK_TAG R2, tnumber, exit(30)
+  %117 = LOAD_DOUBLE R2
+  %118 = NUM_TO_UINT %117
+  %120 = BITOR_UINT %118, 1i
+  %121 = UINT_TO_NUM %120
+  STORE_DOUBLE R6, %121
+  STORE_TAG R6, tnumber
+  JUMP bb_20
+bb_20:
+  CHECK_TAG R6, tnumber, exit(35)
+  %142 = SUB_NUM 1e+30, R6
+  STORE_DOUBLE R5, %142
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_23
+  %149 = NUM_TO_UINT %142
+  %151 = BITAND_UINT %149, 65535i
+  %152 = UINT_TO_NUM %151
+  STORE_DOUBLE R4, %152
+  STORE_TAG R4, tnumber
+  JUMP bb_24
+bb_24:
   INTERRUPT 42u
   RETURN R2, 3i
 )"
@@ -6576,21 +8327,58 @@ end
         R"(
 ; function f() line 2
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
   FALLBACK_PREPVARARGS 0u, 0i
+  STORE_DOUBLE R1, 538976288
+  STORE_TAG R1, tnumber
+  STORE_DOUBLE R2, 4
+  STORE_TAG R2, tnumber
+  STORE_DOUBLE R3, 4
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, 4
+  STORE_TAG R4, tnumber
+  STORE_DOUBLE R5, 262144
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   STORE_INT R0, 0i
   STORE_TAG R0, tboolean
-  JUMP_IF_FALSY R0, bb_bytecode_1, bb_4
+  JUMP bb_4
 bb_4:
+  JUMP_IF_FALSY R0, bb_bytecode_1, bb_7
+bb_7:
   INTERRUPT 11u
   RETURN R0, 0i
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(12)
+  STORE_DOUBLE R1, 538976288
+  STORE_TAG R1, tnumber
+  STORE_DOUBLE R2, 4
+  STORE_TAG R2, tnumber
+  CHECK_SAFE_ENV bb_fallback_8
   GET_CACHED_IMPORT R3, K6 (nil), 1078984704u ('_'), 15u
-  CHECK_TAG R3, tnumber, bb_exit_6
-   ; exit sync: R5, R4, R2, R1, {}
-  STORE_INT R0, 0i
+  JUMP bb_9
+bb_9:
+  STORE_DOUBLE R4, 4
+  STORE_TAG R4, tnumber
+  STORE_DOUBLE R5, 67108864
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_10
+  CHECK_TAG R1, tnumber, exit(19)
+  CHECK_TAG R2, tnumber, exit(19)
+  CHECK_TAG R3, tnumber, exit(19)
+  %77 = LOAD_DOUBLE R1
+  %78 = NUM_TO_UINT %77
+  %79 = LOAD_DOUBLE R2
+  %80 = NUM_TO_UINT %79
+  %81 = BITAND_UINT %78, %80
+  %82 = LOAD_DOUBLE R3
+  %83 = NUM_TO_UINT %82
+  %84 = BITAND_UINT %81, %83
+  %87 = BITAND_UINT %84, 4i
+  %90 = BITAND_UINT %87, 67108864i
+  %91 = CMP_INT %90, 0i, not_eq
+  STORE_INT R0, %91
   STORE_TAG R0, tboolean
+  JUMP bb_11
+bb_11:
   JUMP_IF_FALSY R0, bb_bytecode_2, bb_bytecode_2
 bb_bytecode_2:
   INTERRUPT 23u
@@ -7416,17 +9204,64 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %7 = LOAD_POINTER R0
   CHECK_BUFFER_LEN %7, 0i, 0i, 8i, undef, exit(2)
   %10 = BUFFER_READF32 %7, 0i, tbuffer
   %11 = FLOAT_TO_NUM %10
-  %32 = MUL_NUM %11, %11
-  %41 = BUFFER_READF32 %7, 4i, tbuffer
-  %42 = FLOAT_TO_NUM %41
-  %63 = MUL_NUM %42, %42
-  %72 = ADD_NUM %32, %63
-  STORE_DOUBLE R1, %72
+  JUMP bb_linear_19
+bb_linear_19:
+  %147 = MUL_NUM %11, %11
+  %153 = BUFFER_READF32 %7, 4i, tbuffer
+  %154 = FLOAT_TO_NUM %153
+  %171 = MUL_NUM %154, %154
+  %177 = ADD_NUM %147, %171
+  STORE_DOUBLE R1, %177
+  STORE_TAG R1, tnumber
+  INTERRUPT 31u
+  RETURN R1, 1i
+bb_4:
+  CHECK_SAFE_ENV bb_fallback_7
+  %32 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %32, 0i, 0i, 4i, undef, exit(9)
+  %35 = BUFFER_READF32 %32, 0i, tbuffer
+  %36 = FLOAT_TO_NUM %35
+  STORE_DOUBLE R4, %36
+  STORE_TAG R4, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_TAG R3, tnumber, exit(14)
+  CHECK_TAG R4, tnumber, exit(14)
+  %58 = LOAD_DOUBLE R3
+  %60 = MUL_NUM %58, R4
+  STORE_DOUBLE R2, %60
+  STORE_TAG R2, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %66 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %66, 4i, 0i, 4i, undef, exit(17)
+  %69 = BUFFER_READF32 %66, 4i, tbuffer
+  %70 = FLOAT_TO_NUM %69
+  STORE_DOUBLE R4, %70
+  JUMP bb_12
+bb_12:
+  CHECK_SAFE_ENV bb_fallback_15
+  %91 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %91, 4i, 0i, 4i, undef, exit(24)
+  %94 = BUFFER_READF32 %91, 4i, tbuffer
+  %95 = FLOAT_TO_NUM %94
+  STORE_DOUBLE R5, %95
+  STORE_TAG R5, tnumber
+  JUMP bb_16
+bb_16:
+  CHECK_TAG R4, tnumber, exit(29)
+  CHECK_TAG R5, tnumber, exit(29)
+  %117 = LOAD_DOUBLE R4
+  %119 = MUL_NUM %117, R5
+  CHECK_TAG R2, tnumber, bb_exit_20
+   ; exit sync: R3, {%119}
+  %126 = LOAD_DOUBLE R2
+  %128 = ADD_NUM %126, %119
+  STORE_DOUBLE R1, %128
   STORE_TAG R1, tnumber
   INTERRUPT 31u
   RETURN R1, 1i
@@ -7458,20 +9293,139 @@ bb_0:
 bb_4:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  STORE_DOUBLE R3, 10
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, 32
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_5
   %15 = LOAD_POINTER R0
-  CHECK_BUFFER_LEN %15, 10i, 0i, 5i, undef, bb_exit_17
-   ; exit sync: R4, R3, {}
+  CHECK_BUFFER_LEN %15, 10i, 0i, 1i, undef, exit(4)
   BUFFER_WRITEI8 %15, 10i, 32i, tbuffer
+  JUMP bb_6
+bb_6:
+  CHECK_SAFE_ENV bb_fallback_9
+  %38 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %38, 10i, 0i, 1i, undef, exit(10)
+  %41 = BUFFER_READI8 %38, 10i, tbuffer
+  %42 = INT_TO_NUM %41
+  STORE_DOUBLE R3, %42
+  STORE_TAG R3, tnumber
+  JUMP bb_10
+bb_10:
+  %60 = LOAD_TAG R3
+  %61 = LOAD_DOUBLE R3
+  %62 = CMP_SPLIT_TVALUE %60, tnumber, %61, 32, eq
+  STORE_TAG R2, tboolean
+  STORE_INT R2, %62
   JUMP bb_bytecode_3
 bb_bytecode_3:
-  JUMP bb_8
-bb_8:
-  BUFFER_WRITEI8 %15, 14i, 4i, tbuffer
-  BUFFER_WRITEI8 %15, 13i, 3i, tbuffer
-  BUFFER_WRITEI8 %15, 12i, 2i, tbuffer
-  BUFFER_WRITEI8 %15, 11i, 1i, tbuffer
+  CHECK_SAFE_ENV bb_fallback_13
+  CHECK_TRUTHY tboolean, R2, exit(20)
+  JUMP bb_linear_49
+bb_linear_49:
+  %342 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %342, 14i, -3i, 1i, undef, bb_exit_50
+   ; exit sync: R4, R3, {}
+  BUFFER_WRITEI8 %342, 14i, 4i, tbuffer
+  BUFFER_WRITEI8 %342, 13i, 3i, tbuffer
+  BUFFER_WRITEI8 %342, 12i, 2i, tbuffer
+  BUFFER_WRITEI8 %342, 11i, 1i, tbuffer
   STORE_DOUBLE R1, 10
+  STORE_TAG R1, tnumber
+  INTERRUPT 86u
+  RETURN R1, 1i
+bb_14:
+  STORE_DOUBLE R3, 14
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, 4
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_17
+  %95 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %95, 14i, 0i, 1i, undef, exit(27)
+  BUFFER_WRITEI8 %95, 14i, 4i, tbuffer
+  JUMP bb_18
+bb_18:
+  STORE_DOUBLE R3, 13
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, 3
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_21
+  %126 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %126, 13i, 0i, 1i, undef, exit(35)
+  BUFFER_WRITEI8 %126, 13i, 3i, tbuffer
+  JUMP bb_22
+bb_22:
+  STORE_DOUBLE R3, 12
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, 2
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_25
+  %157 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %157, 12i, 0i, 1i, undef, exit(43)
+  BUFFER_WRITEI8 %157, 12i, 2i, tbuffer
+  JUMP bb_26
+bb_26:
+  STORE_DOUBLE R3, 11
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, 1
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_29
+  %188 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %188, 11i, 0i, 1i, undef, exit(51)
+  BUFFER_WRITEI8 %188, 11i, 1i, tbuffer
+  JUMP bb_30
+bb_30:
+  CHECK_SAFE_ENV bb_fallback_33
+  %211 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %211, 11i, 0i, 1i, undef, exit(57)
+  %214 = BUFFER_READI8 %211, 11i, tbuffer
+  %215 = INT_TO_NUM %214
+  STORE_DOUBLE R4, %215
+  STORE_TAG R4, tnumber
+  JUMP bb_34
+bb_34:
+  CHECK_SAFE_ENV bb_fallback_37
+  %236 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %236, 12i, 0i, 1i, undef, exit(64)
+  %239 = BUFFER_READI8 %236, 12i, tbuffer
+  %240 = INT_TO_NUM %239
+  STORE_DOUBLE R5, %240
+  STORE_TAG R5, tnumber
+  JUMP bb_38
+bb_38:
+  CHECK_TAG R4, tnumber, exit(69)
+  CHECK_TAG R5, tnumber, exit(69)
+  %262 = LOAD_DOUBLE R4
+  %264 = ADD_NUM %262, R5
+  STORE_DOUBLE R3, %264
+  STORE_TAG R3, tnumber
+  CHECK_SAFE_ENV bb_fallback_41
+  %270 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %270, 14i, 0i, 1i, undef, exit(72)
+  %273 = BUFFER_READI8 %270, 14i, tbuffer
+  %274 = INT_TO_NUM %273
+  STORE_DOUBLE R4, %274
+  JUMP bb_42
+bb_42:
+  CHECK_TAG R3, tnumber, exit(77)
+  CHECK_TAG R4, tnumber, exit(77)
+  %296 = LOAD_DOUBLE R3
+  %298 = ADD_NUM %296, R4
+  STORE_DOUBLE R2, %298
+  STORE_TAG R2, tnumber
+  CHECK_SAFE_ENV bb_fallback_45
+  %304 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %304, 13i, 0i, 1i, undef, exit(80)
+  %307 = BUFFER_READI8 %304, 13i, tbuffer
+  %308 = INT_TO_NUM %307
+  STORE_DOUBLE R3, %308
+  JUMP bb_46
+bb_46:
+  CHECK_TAG R2, tnumber, exit(85)
+  CHECK_TAG R3, tnumber, exit(85)
+  %330 = LOAD_DOUBLE R2
+  %332 = ADD_NUM %330, R3
+  STORE_DOUBLE R1, %332
   STORE_TAG R1, tnumber
   INTERRUPT 86u
   RETURN R1, 1i
@@ -7518,64 +9472,356 @@ bb_0:
 bb_26:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  STORE_DOUBLE R3, 0
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, 4294967295
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_27
   %15 = LOAD_POINTER R0
-  CHECK_BUFFER_LEN %15, 0i, 0i, 4i, undef, bb_exit_69
-   ; exit sync: R4, R3, {}
+  CHECK_BUFFER_LEN %15, 0i, 0i, 4i, undef, exit(4)
   BUFFER_WRITEI32 %15, 0i, -1i, tbuffer
+  JUMP bb_28
+bb_28:
+  CHECK_SAFE_ENV bb_fallback_31
+  %38 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %38, 0i, 0i, 4i, undef, exit(10)
+  %41 = BUFFER_READI32 %38, 0i, tbuffer
+  %42 = INT_TO_NUM %41
+  STORE_DOUBLE R3, %42
+  STORE_TAG R3, tnumber
+  JUMP bb_32
+bb_32:
+  %60 = LOAD_TAG R3
+  %61 = LOAD_DOUBLE R3
+  %62 = CMP_SPLIT_TVALUE %60, tnumber, %61, -1, eq
+  STORE_TAG R2, tboolean
+  STORE_INT R2, %62
   JUMP bb_bytecode_3
 bb_bytecode_3:
-  JUMP bb_30
-bb_30:
-  JUMP bb_bytecode_5
-bb_bytecode_5:
-  JUMP bb_33
-bb_33:
-  BUFFER_WRITEI32 %15, 0i, -1i, tbuffer
-  JUMP bb_bytecode_7
-bb_bytecode_7:
-  JUMP bb_37
-bb_37:
-  JUMP bb_bytecode_9
-bb_bytecode_9:
+  CHECK_SAFE_ENV bb_fallback_35
+  CHECK_TRUTHY R2, R2, exit(20)
+  JUMP bb_36
+bb_36:
+  CHECK_SAFE_ENV bb_fallback_39
+  %87 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %87, 0i, 0i, 4i, undef, exit(25)
+  %90 = BUFFER_READI32 %87, 0i, tbuffer
+  %91 = UINT_TO_NUM %90
+  STORE_DOUBLE R3, %91
+  STORE_TAG R3, tnumber
   JUMP bb_40
 bb_40:
-  BUFFER_WRITEI16 %15, 0i, 65535i, tbuffer
-  JUMP bb_bytecode_11
-bb_bytecode_11:
-  JUMP bb_44
+  %109 = LOAD_TAG R3
+  %110 = LOAD_DOUBLE R3
+  %111 = CMP_SPLIT_TVALUE %109, tnumber, %110, 4294967295, eq
+  STORE_TAG R2, tboolean
+  STORE_INT R2, %111
+  JUMP bb_bytecode_5
+bb_bytecode_5:
+  CHECK_SAFE_ENV bb_fallback_43
+  CHECK_TRUTHY tboolean, R2, exit(35)
+  JUMP bb_linear_147
+bb_linear_147:
+  STORE_DOUBLE R4, -1
+  STORE_TAG R4, tnumber
+  %785 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %785, 0i, 0i, 4i, undef, bb_exit_152
+   ; exit sync: R3, {}
+  BUFFER_WRITEI32 %785, 0i, -1i, tbuffer
+  STORE_SPLIT_TVALUE R3, tnumber, -1
+  STORE_INT R2, 1i
+  JUMP bb_bytecode_7
 bb_44:
-  JUMP bb_bytecode_13
-bb_bytecode_13:
-  JUMP bb_47
-bb_47:
-  BUFFER_WRITEI16 %15, 0i, 65535i, tbuffer
-  JUMP bb_bytecode_15
-bb_bytecode_15:
-  JUMP bb_51
-bb_51:
-  JUMP bb_bytecode_17
-bb_bytecode_17:
-  JUMP bb_54
-bb_54:
-  BUFFER_WRITEI8 %15, 0i, -1i, tbuffer
-  JUMP bb_bytecode_19
-bb_bytecode_19:
-  JUMP bb_58
-bb_58:
-  JUMP bb_bytecode_21
-bb_bytecode_21:
-  JUMP bb_61
-bb_61:
-  BUFFER_WRITEI16 %15, 0i, -1i, tbuffer
-  JUMP bb_bytecode_23
-bb_bytecode_23:
-  JUMP bb_65
-bb_65:
-  JUMP bb_bytecode_25
-bb_bytecode_25:
+  STORE_DOUBLE R3, 0
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, -1
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_47
+  %144 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %144, 0i, 0i, 4i, undef, exit(42)
+  BUFFER_WRITEI32 %144, 0i, -1i, tbuffer
+  JUMP bb_48
+bb_48:
+  CHECK_SAFE_ENV bb_fallback_51
+  %167 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %167, 0i, 0i, 4i, undef, exit(48)
+  %170 = BUFFER_READI32 %167, 0i, tbuffer
+  %171 = INT_TO_NUM %170
+  STORE_DOUBLE R3, %171
+  STORE_TAG R3, tnumber
+  JUMP bb_52
+bb_52:
+  %189 = LOAD_TAG R3
+  %190 = LOAD_DOUBLE R3
+  %191 = CMP_SPLIT_TVALUE %189, tnumber, %190, -1, eq
+  STORE_TAG R2, tboolean
+  STORE_INT R2, %191
+  JUMP bb_bytecode_7
+bb_bytecode_7:
+  CHECK_SAFE_ENV bb_fallback_55
+  CHECK_TRUTHY R2, R2, exit(58)
+  JUMP bb_56
+bb_56:
+  CHECK_SAFE_ENV bb_fallback_59
+  %216 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %216, 0i, 0i, 4i, undef, exit(63)
+  %219 = BUFFER_READI32 %216, 0i, tbuffer
+  %220 = UINT_TO_NUM %219
+  STORE_DOUBLE R3, %220
+  STORE_TAG R3, tnumber
+  JUMP bb_60
+bb_60:
+  %238 = LOAD_TAG R3
+  %239 = LOAD_DOUBLE R3
+  %240 = CMP_SPLIT_TVALUE %238, tnumber, %239, 4294967295, eq
+  STORE_TAG R2, tboolean
+  STORE_INT R2, %240
+  JUMP bb_bytecode_9
+bb_bytecode_9:
+  CHECK_SAFE_ENV bb_fallback_63
+  CHECK_TRUTHY tboolean, R2, exit(73)
+  JUMP bb_linear_148
+bb_linear_148:
+  STORE_DOUBLE R4, 65535
+  STORE_TAG R4, tnumber
+  %808 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %808, 0i, 0i, 2i, undef, bb_exit_153
+   ; exit sync: R3, {}
+  BUFFER_WRITEI16 %808, 0i, 65535i, tbuffer
+  STORE_SPLIT_TVALUE R3, tnumber, -1
+  STORE_INT R2, 1i
+  JUMP bb_bytecode_11
+bb_64:
+  STORE_DOUBLE R3, 0
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, 65535
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_67
+  %273 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %273, 0i, 0i, 2i, undef, exit(80)
+  BUFFER_WRITEI16 %273, 0i, 65535i, tbuffer
   JUMP bb_68
 bb_68:
+  CHECK_SAFE_ENV bb_fallback_71
+  %296 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %296, 0i, 0i, 2i, undef, exit(86)
+  %299 = BUFFER_READI16 %296, 0i, tbuffer
+  %300 = INT_TO_NUM %299
+  STORE_DOUBLE R3, %300
+  STORE_TAG R3, tnumber
+  JUMP bb_72
+bb_72:
+  %318 = LOAD_TAG R3
+  %319 = LOAD_DOUBLE R3
+  %320 = CMP_SPLIT_TVALUE %318, tnumber, %319, -1, eq
+  STORE_TAG R2, tboolean
+  STORE_INT R2, %320
+  JUMP bb_bytecode_11
+bb_bytecode_11:
+  CHECK_SAFE_ENV bb_fallback_75
+  CHECK_TRUTHY R2, R2, exit(96)
+  JUMP bb_76
+bb_76:
+  CHECK_SAFE_ENV bb_fallback_79
+  %345 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %345, 0i, 0i, 2i, undef, exit(101)
+  %348 = BUFFER_READU16 %345, 0i, tbuffer
+  %349 = INT_TO_NUM %348
+  STORE_DOUBLE R3, %349
+  STORE_TAG R3, tnumber
+  JUMP bb_80
+bb_80:
+  %367 = LOAD_TAG R3
+  %368 = LOAD_DOUBLE R3
+  %369 = CMP_SPLIT_TVALUE %367, tnumber, %368, 65535, eq
+  STORE_TAG R2, tboolean
+  STORE_INT R2, %369
+  JUMP bb_bytecode_13
+bb_bytecode_13:
+  CHECK_SAFE_ENV bb_fallback_83
+  CHECK_TRUTHY tboolean, R2, exit(111)
+  JUMP bb_linear_149
+bb_linear_149:
+  STORE_DOUBLE R4, 65535
+  STORE_TAG R4, tnumber
+  %831 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %831, 0i, 0i, 2i, undef, bb_exit_154
+   ; exit sync: R3, {}
+  BUFFER_WRITEI16 %831, 0i, 65535i, tbuffer
+  STORE_SPLIT_TVALUE R3, tnumber, -1
+  STORE_INT R2, 1i
+  JUMP bb_bytecode_15
+bb_84:
+  STORE_DOUBLE R3, 0
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, 65535
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_87
+  %402 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %402, 0i, 0i, 2i, undef, exit(118)
+  BUFFER_WRITEI16 %402, 0i, 65535i, tbuffer
+  JUMP bb_88
+bb_88:
+  CHECK_SAFE_ENV bb_fallback_91
+  %425 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %425, 0i, 0i, 2i, undef, exit(124)
+  %428 = BUFFER_READI16 %425, 0i, tbuffer
+  %429 = INT_TO_NUM %428
+  STORE_DOUBLE R3, %429
+  STORE_TAG R3, tnumber
+  JUMP bb_92
+bb_92:
+  %447 = LOAD_TAG R3
+  %448 = LOAD_DOUBLE R3
+  %449 = CMP_SPLIT_TVALUE %447, tnumber, %448, -1, eq
+  STORE_TAG R2, tboolean
+  STORE_INT R2, %449
+  JUMP bb_bytecode_15
+bb_bytecode_15:
+  CHECK_SAFE_ENV bb_fallback_95
+  CHECK_TRUTHY R2, R2, exit(134)
+  JUMP bb_96
+bb_96:
+  CHECK_SAFE_ENV bb_fallback_99
+  %474 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %474, 0i, 0i, 2i, undef, exit(139)
+  %477 = BUFFER_READU16 %474, 0i, tbuffer
+  %478 = INT_TO_NUM %477
+  STORE_DOUBLE R3, %478
+  STORE_TAG R3, tnumber
+  JUMP bb_100
+bb_100:
+  %496 = LOAD_TAG R3
+  %497 = LOAD_DOUBLE R3
+  %498 = CMP_SPLIT_TVALUE %496, tnumber, %497, 65535, eq
+  STORE_TAG R2, tboolean
+  STORE_INT R2, %498
+  JUMP bb_bytecode_17
+bb_bytecode_17:
+  CHECK_SAFE_ENV bb_fallback_103
+  CHECK_TRUTHY tboolean, R2, exit(149)
+  JUMP bb_linear_150
+bb_linear_150:
+  STORE_DOUBLE R4, 4294967295
+  STORE_TAG R4, tnumber
+  %854 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %854, 0i, 0i, 1i, undef, bb_exit_155
+   ; exit sync: R3, {}
+  BUFFER_WRITEI8 %854, 0i, -1i, tbuffer
+  STORE_SPLIT_TVALUE R3, tnumber, -1
+  STORE_INT R2, 1i
+  JUMP bb_bytecode_19
+bb_104:
+  STORE_DOUBLE R3, 0
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, 4294967295
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_107
+  %531 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %531, 0i, 0i, 1i, undef, exit(156)
+  BUFFER_WRITEI8 %531, 0i, -1i, tbuffer
+  JUMP bb_108
+bb_108:
+  CHECK_SAFE_ENV bb_fallback_111
+  %554 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %554, 0i, 0i, 1i, undef, exit(162)
+  %557 = BUFFER_READI8 %554, 0i, tbuffer
+  %558 = INT_TO_NUM %557
+  STORE_DOUBLE R3, %558
+  STORE_TAG R3, tnumber
+  JUMP bb_112
+bb_112:
+  %576 = LOAD_TAG R3
+  %577 = LOAD_DOUBLE R3
+  %578 = CMP_SPLIT_TVALUE %576, tnumber, %577, -1, eq
+  STORE_TAG R2, tboolean
+  STORE_INT R2, %578
+  JUMP bb_bytecode_19
+bb_bytecode_19:
+  CHECK_SAFE_ENV bb_fallback_115
+  CHECK_TRUTHY R2, R2, exit(172)
+  JUMP bb_116
+bb_116:
+  CHECK_SAFE_ENV bb_fallback_119
+  %603 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %603, 0i, 0i, 1i, undef, exit(177)
+  %606 = BUFFER_READU8 %603, 0i, tbuffer
+  %607 = INT_TO_NUM %606
+  STORE_DOUBLE R3, %607
+  STORE_TAG R3, tnumber
+  JUMP bb_120
+bb_120:
+  %625 = LOAD_TAG R3
+  %626 = LOAD_DOUBLE R3
+  %627 = CMP_SPLIT_TVALUE %625, tnumber, %626, 255, eq
+  STORE_TAG R2, tboolean
+  STORE_INT R2, %627
+  JUMP bb_bytecode_21
+bb_bytecode_21:
+  CHECK_SAFE_ENV bb_fallback_123
+  CHECK_TRUTHY tboolean, R2, exit(187)
+  JUMP bb_linear_151
+bb_linear_151:
+  STORE_DOUBLE R4, 4294967295
+  STORE_TAG R4, tnumber
+  %877 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %877, 0i, 0i, 2i, undef, bb_exit_156
+   ; exit sync: R3, {}
+  BUFFER_WRITEI16 %877, 0i, -1i, tbuffer
+  STORE_SPLIT_TVALUE R3, tnumber, -1
+  STORE_INT R2, 1i
+  JUMP bb_bytecode_23
+bb_124:
+  STORE_DOUBLE R3, 0
+  STORE_TAG R3, tnumber
+  STORE_DOUBLE R4, 4294967295
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_127
+  %660 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %660, 0i, 0i, 2i, undef, exit(194)
+  BUFFER_WRITEI16 %660, 0i, -1i, tbuffer
+  JUMP bb_128
+bb_128:
+  CHECK_SAFE_ENV bb_fallback_131
+  %683 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %683, 0i, 0i, 2i, undef, exit(200)
+  %686 = BUFFER_READI16 %683, 0i, tbuffer
+  %687 = INT_TO_NUM %686
+  STORE_DOUBLE R3, %687
+  STORE_TAG R3, tnumber
+  JUMP bb_132
+bb_132:
+  %705 = LOAD_TAG R3
+  %706 = LOAD_DOUBLE R3
+  %707 = CMP_SPLIT_TVALUE %705, tnumber, %706, -1, eq
+  STORE_TAG R2, tboolean
+  STORE_INT R2, %707
+  JUMP bb_bytecode_23
+bb_bytecode_23:
+  CHECK_SAFE_ENV bb_fallback_135
+  CHECK_TRUTHY R2, R2, exit(210)
+  JUMP bb_136
+bb_136:
+  CHECK_SAFE_ENV bb_fallback_139
+  %732 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %732, 0i, 0i, 2i, undef, exit(215)
+  %735 = BUFFER_READU16 %732, 0i, tbuffer
+  %736 = INT_TO_NUM %735
+  STORE_DOUBLE R3, %736
+  STORE_TAG R3, tnumber
+  JUMP bb_140
+bb_140:
+  %754 = LOAD_TAG R3
+  %755 = LOAD_DOUBLE R3
+  %756 = CMP_SPLIT_TVALUE %754, tnumber, %755, 65535, eq
+  STORE_TAG R2, tboolean
+  STORE_INT R2, %756
+  JUMP bb_bytecode_25
+bb_bytecode_25:
+  CHECK_SAFE_ENV bb_fallback_143
+  CHECK_TRUTHY R2, R2, exit(225)
+  JUMP bb_144
+bb_144:
   INTERRUPT 228u
   RETURN R0, 0i
 )"
@@ -7637,56 +9883,627 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  STORE_DOUBLE R5, 0
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   %17 = LOAD_POINTER R0
-  CHECK_BUFFER_LEN %17, 0i, 0i, 212i, undef, bb_exit_55
-   ; exit sync: R5, {}
+  CHECK_BUFFER_LEN %17, 0i, 0i, 212i, undef, exit(3)
   %21 = LOAD_DOUBLE R1
   %22 = NUM_TO_UINT %21
   BUFFER_WRITEI8 %17, 0i, %22, tbuffer
-  %33 = SEXTI8_INT %22
-  %34 = INT_TO_NUM %33
-  BUFFER_WRITEF64 %17, 100i, %34, tbuffer
+  JUMP bb_linear_211
+bb_linear_211:
+  %1440 = SEXTI8_INT %22
+  %1441 = INT_TO_NUM %1440
+  BUFFER_WRITEF64 %17, 100i, %1441, tbuffer
   BUFFER_WRITEI8 %17, 108i, %22, tbuffer
   BUFFER_WRITEI8 %17, 109i, %22, tbuffer
   BUFFER_WRITEI8 %17, 2i, %22, tbuffer
-  %133 = BITAND_UINT %22, 255i
-  %134 = INT_TO_NUM %133
-  BUFFER_WRITEF64 %17, 116i, %134, tbuffer
+  %1517 = BITAND_UINT %22, 255i
+  %1518 = INT_TO_NUM %1517
+  BUFFER_WRITEF64 %17, 116i, %1518, tbuffer
   BUFFER_WRITEI8 %17, 124i, %22, tbuffer
   BUFFER_WRITEI8 %17, 125i, %22, tbuffer
   BUFFER_WRITEI16 %17, 4i, %22, tbuffer
-  %233 = SEXTI16_INT %22
-  %234 = INT_TO_NUM %233
-  BUFFER_WRITEF64 %17, 132i, %234, tbuffer
+  %1594 = SEXTI16_INT %22
+  %1595 = INT_TO_NUM %1594
+  BUFFER_WRITEF64 %17, 132i, %1595, tbuffer
   BUFFER_WRITEI16 %17, 140i, %22, tbuffer
   BUFFER_WRITEI16 %17, 142i, %22, tbuffer
   BUFFER_WRITEI16 %17, 8i, %22, tbuffer
-  %333 = BITAND_UINT %22, 65535i
-  %334 = INT_TO_NUM %333
-  BUFFER_WRITEF64 %17, 148i, %334, tbuffer
+  %1671 = BITAND_UINT %22, 65535i
+  %1672 = INT_TO_NUM %1671
+  BUFFER_WRITEF64 %17, 148i, %1672, tbuffer
   BUFFER_WRITEI16 %17, 156i, %22, tbuffer
   BUFFER_WRITEI16 %17, 158i, %22, tbuffer
   BUFFER_WRITEI32 %17, 12i, %22, tbuffer
-  %433 = TRUNCATE_UINT %22
-  %434 = INT_TO_NUM %433
-  BUFFER_WRITEF64 %17, 164i, %434, tbuffer
+  %1748 = TRUNCATE_UINT %22
+  %1749 = INT_TO_NUM %1748
+  BUFFER_WRITEF64 %17, 164i, %1749, tbuffer
   BUFFER_WRITEI32 %17, 172i, %22, tbuffer
   BUFFER_WRITEI32 %17, 176i, %22, tbuffer
   BUFFER_WRITEI32 %17, 20i, %22, tbuffer
-  %534 = UINT_TO_NUM %22
-  BUFFER_WRITEF64 %17, 180i, %534, tbuffer
+  %1826 = UINT_TO_NUM %22
+  BUFFER_WRITEF64 %17, 180i, %1826, tbuffer
   BUFFER_WRITEI32 %17, 188i, %22, tbuffer
   BUFFER_WRITEI32 %17, 192i, %22, tbuffer
-  %621 = LOAD_DOUBLE R2
-  %622 = NUM_TO_FLOAT %621
-  BUFFER_WRITEF32 %17, 28i, %622, tbuffer
-  %634 = FLOAT_TO_NUM %622
-  BUFFER_WRITEF64 %17, 196i, %634, tbuffer
-  BUFFER_WRITEF32 %17, 196i, %622, tbuffer
-  BUFFER_WRITEF64 %17, 32i, %621, tbuffer
-  BUFFER_WRITEF64 %17, 204i, %621, tbuffer
-  BUFFER_WRITEF32 %17, 204i, %622, tbuffer
+  %1893 = LOAD_DOUBLE R2
+  %1894 = NUM_TO_FLOAT %1893
+  BUFFER_WRITEF32 %17, 28i, %1894, tbuffer
+  %1903 = FLOAT_TO_NUM %1894
+  BUFFER_WRITEF64 %17, 196i, %1903, tbuffer
+  BUFFER_WRITEF32 %17, 196i, %1894, tbuffer
+  BUFFER_WRITEF64 %17, 32i, %1893, tbuffer
+  BUFFER_WRITEF64 %17, 204i, %1893, tbuffer
+  BUFFER_WRITEF32 %17, 204i, %1894, tbuffer
+  INTERRUPT 372u
+  RETURN R0, 0i
+bb_4:
+  STORE_DOUBLE R5, 100
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %44 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %44, 0i, 0i, 1i, undef, exit(11)
+  %47 = BUFFER_READI8 %44, 0i, tbuffer
+  %48 = INT_TO_NUM %47
+  STORE_DOUBLE R6, %48
+  STORE_TAG R6, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_SAFE_ENV bb_fallback_11
+  CHECK_TAG R5, tnumber, exit(18)
+  CHECK_TAG R6, tnumber, exit(18)
+  %73 = LOAD_POINTER R0
+  %74 = LOAD_DOUBLE R5
+  %75 = NUM_TO_INT %74
+  CHECK_BUFFER_LEN %73, %75, 0i, 8i, undef, exit(18)
+  %77 = LOAD_DOUBLE R6
+  BUFFER_WRITEF64 %73, %75, %77, tbuffer
+  JUMP bb_12
+bb_12:
+  STORE_DOUBLE R5, 108
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_15
+  %97 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %97, 0i, 0i, 1i, undef, exit(25)
+  %100 = BUFFER_READI8 %97, 0i, tbuffer
+  %101 = INT_TO_NUM %100
+  STORE_DOUBLE R6, %101
+  STORE_TAG R6, tnumber
+  JUMP bb_16
+bb_16:
+  CHECK_SAFE_ENV bb_fallback_19
+  CHECK_TAG R5, tnumber, exit(32)
+  CHECK_TAG R6, tnumber, exit(32)
+  %126 = LOAD_POINTER R0
+  %127 = LOAD_DOUBLE R5
+  %128 = NUM_TO_INT %127
+  CHECK_BUFFER_LEN %126, %128, 0i, 1i, undef, exit(32)
+  %130 = LOAD_DOUBLE R6
+  %131 = NUM_TO_UINT %130
+  BUFFER_WRITEI8 %126, %128, %131, tbuffer
+  JUMP bb_20
+bb_20:
+  STORE_DOUBLE R5, 109
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_23
+  %151 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %151, 0i, 0i, 1i, undef, exit(39)
+  %154 = BUFFER_READI8 %151, 0i, tbuffer
+  %155 = INT_TO_NUM %154
+  STORE_DOUBLE R6, %155
+  STORE_TAG R6, tnumber
+  JUMP bb_24
+bb_24:
+  CHECK_SAFE_ENV bb_fallback_27
+  CHECK_TAG R5, tnumber, exit(46)
+  CHECK_TAG R6, tnumber, exit(46)
+  %180 = LOAD_POINTER R0
+  %181 = LOAD_DOUBLE R5
+  %182 = NUM_TO_INT %181
+  CHECK_BUFFER_LEN %180, %182, 0i, 1i, undef, exit(46)
+  %184 = LOAD_DOUBLE R6
+  %185 = NUM_TO_UINT %184
+  BUFFER_WRITEI8 %180, %182, %185, tbuffer
+  JUMP bb_28
+bb_28:
+  STORE_DOUBLE R5, 2
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_31
+  %209 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %209, 2i, 0i, 1i, undef, exit(53)
+  %213 = LOAD_DOUBLE R1
+  %214 = NUM_TO_UINT %213
+  BUFFER_WRITEI8 %209, 2i, %214, tbuffer
+  JUMP bb_32
+bb_32:
+  STORE_DOUBLE R5, 116
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_35
+  %236 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %236, 2i, 0i, 1i, undef, exit(61)
+  %239 = BUFFER_READU8 %236, 2i, tbuffer
+  %240 = INT_TO_NUM %239
+  STORE_DOUBLE R6, %240
+  STORE_TAG R6, tnumber
+  JUMP bb_36
+bb_36:
+  CHECK_SAFE_ENV bb_fallback_39
+  CHECK_TAG R5, tnumber, exit(68)
+  CHECK_TAG R6, tnumber, exit(68)
+  %265 = LOAD_POINTER R0
+  %266 = LOAD_DOUBLE R5
+  %267 = NUM_TO_INT %266
+  CHECK_BUFFER_LEN %265, %267, 0i, 8i, undef, exit(68)
+  %269 = LOAD_DOUBLE R6
+  BUFFER_WRITEF64 %265, %267, %269, tbuffer
+  JUMP bb_40
+bb_40:
+  STORE_DOUBLE R5, 124
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_43
+  %289 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %289, 2i, 0i, 1i, undef, exit(75)
+  %292 = BUFFER_READU8 %289, 2i, tbuffer
+  %293 = INT_TO_NUM %292
+  STORE_DOUBLE R6, %293
+  STORE_TAG R6, tnumber
+  JUMP bb_44
+bb_44:
+  CHECK_SAFE_ENV bb_fallback_47
+  CHECK_TAG R5, tnumber, exit(82)
+  CHECK_TAG R6, tnumber, exit(82)
+  %318 = LOAD_POINTER R0
+  %319 = LOAD_DOUBLE R5
+  %320 = NUM_TO_INT %319
+  CHECK_BUFFER_LEN %318, %320, 0i, 1i, undef, exit(82)
+  %322 = LOAD_DOUBLE R6
+  %323 = NUM_TO_UINT %322
+  BUFFER_WRITEI8 %318, %320, %323, tbuffer
+  JUMP bb_48
+bb_48:
+  STORE_DOUBLE R5, 125
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_51
+  %343 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %343, 2i, 0i, 1i, undef, exit(89)
+  %346 = BUFFER_READU8 %343, 2i, tbuffer
+  %347 = INT_TO_NUM %346
+  STORE_DOUBLE R6, %347
+  STORE_TAG R6, tnumber
+  JUMP bb_52
+bb_52:
+  CHECK_SAFE_ENV bb_fallback_55
+  CHECK_TAG R5, tnumber, exit(96)
+  CHECK_TAG R6, tnumber, exit(96)
+  %372 = LOAD_POINTER R0
+  %373 = LOAD_DOUBLE R5
+  %374 = NUM_TO_INT %373
+  CHECK_BUFFER_LEN %372, %374, 0i, 1i, undef, exit(96)
+  %376 = LOAD_DOUBLE R6
+  %377 = NUM_TO_UINT %376
+  BUFFER_WRITEI8 %372, %374, %377, tbuffer
+  JUMP bb_56
+bb_56:
+  STORE_DOUBLE R5, 4
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_59
+  %401 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %401, 4i, 0i, 2i, undef, exit(103)
+  %405 = LOAD_DOUBLE R1
+  %406 = NUM_TO_UINT %405
+  BUFFER_WRITEI16 %401, 4i, %406, tbuffer
+  JUMP bb_60
+bb_60:
+  STORE_DOUBLE R5, 132
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_63
+  %428 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %428, 4i, 0i, 2i, undef, exit(111)
+  %431 = BUFFER_READI16 %428, 4i, tbuffer
+  %432 = INT_TO_NUM %431
+  STORE_DOUBLE R6, %432
+  STORE_TAG R6, tnumber
+  JUMP bb_64
+bb_64:
+  CHECK_SAFE_ENV bb_fallback_67
+  CHECK_TAG R5, tnumber, exit(118)
+  CHECK_TAG R6, tnumber, exit(118)
+  %457 = LOAD_POINTER R0
+  %458 = LOAD_DOUBLE R5
+  %459 = NUM_TO_INT %458
+  CHECK_BUFFER_LEN %457, %459, 0i, 8i, undef, exit(118)
+  %461 = LOAD_DOUBLE R6
+  BUFFER_WRITEF64 %457, %459, %461, tbuffer
+  JUMP bb_68
+bb_68:
+  STORE_DOUBLE R5, 140
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_71
+  %481 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %481, 4i, 0i, 2i, undef, exit(125)
+  %484 = BUFFER_READI16 %481, 4i, tbuffer
+  %485 = INT_TO_NUM %484
+  STORE_DOUBLE R6, %485
+  STORE_TAG R6, tnumber
+  JUMP bb_72
+bb_72:
+  CHECK_SAFE_ENV bb_fallback_75
+  CHECK_TAG R5, tnumber, exit(132)
+  CHECK_TAG R6, tnumber, exit(132)
+  %510 = LOAD_POINTER R0
+  %511 = LOAD_DOUBLE R5
+  %512 = NUM_TO_INT %511
+  CHECK_BUFFER_LEN %510, %512, 0i, 2i, undef, exit(132)
+  %514 = LOAD_DOUBLE R6
+  %515 = NUM_TO_UINT %514
+  BUFFER_WRITEI16 %510, %512, %515, tbuffer
+  JUMP bb_76
+bb_76:
+  STORE_DOUBLE R5, 142
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_79
+  %535 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %535, 4i, 0i, 2i, undef, exit(139)
+  %538 = BUFFER_READI16 %535, 4i, tbuffer
+  %539 = INT_TO_NUM %538
+  STORE_DOUBLE R6, %539
+  STORE_TAG R6, tnumber
+  JUMP bb_80
+bb_80:
+  CHECK_SAFE_ENV bb_fallback_83
+  CHECK_TAG R5, tnumber, exit(146)
+  CHECK_TAG R6, tnumber, exit(146)
+  %564 = LOAD_POINTER R0
+  %565 = LOAD_DOUBLE R5
+  %566 = NUM_TO_INT %565
+  CHECK_BUFFER_LEN %564, %566, 0i, 2i, undef, exit(146)
+  %568 = LOAD_DOUBLE R6
+  %569 = NUM_TO_UINT %568
+  BUFFER_WRITEI16 %564, %566, %569, tbuffer
+  JUMP bb_84
+bb_84:
+  STORE_DOUBLE R5, 8
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_87
+  %593 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %593, 8i, 0i, 2i, undef, exit(153)
+  %597 = LOAD_DOUBLE R1
+  %598 = NUM_TO_UINT %597
+  BUFFER_WRITEI16 %593, 8i, %598, tbuffer
+  JUMP bb_88
+bb_88:
+  STORE_DOUBLE R5, 148
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_91
+  %620 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %620, 8i, 0i, 2i, undef, exit(161)
+  %623 = BUFFER_READU16 %620, 8i, tbuffer
+  %624 = INT_TO_NUM %623
+  STORE_DOUBLE R6, %624
+  STORE_TAG R6, tnumber
+  JUMP bb_92
+bb_92:
+  CHECK_SAFE_ENV bb_fallback_95
+  CHECK_TAG R5, tnumber, exit(168)
+  CHECK_TAG R6, tnumber, exit(168)
+  %649 = LOAD_POINTER R0
+  %650 = LOAD_DOUBLE R5
+  %651 = NUM_TO_INT %650
+  CHECK_BUFFER_LEN %649, %651, 0i, 8i, undef, exit(168)
+  %653 = LOAD_DOUBLE R6
+  BUFFER_WRITEF64 %649, %651, %653, tbuffer
+  JUMP bb_96
+bb_96:
+  STORE_DOUBLE R5, 156
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_99
+  %673 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %673, 8i, 0i, 2i, undef, exit(175)
+  %676 = BUFFER_READU16 %673, 8i, tbuffer
+  %677 = INT_TO_NUM %676
+  STORE_DOUBLE R6, %677
+  STORE_TAG R6, tnumber
+  JUMP bb_100
+bb_100:
+  CHECK_SAFE_ENV bb_fallback_103
+  CHECK_TAG R5, tnumber, exit(182)
+  CHECK_TAG R6, tnumber, exit(182)
+  %702 = LOAD_POINTER R0
+  %703 = LOAD_DOUBLE R5
+  %704 = NUM_TO_INT %703
+  CHECK_BUFFER_LEN %702, %704, 0i, 2i, undef, exit(182)
+  %706 = LOAD_DOUBLE R6
+  %707 = NUM_TO_UINT %706
+  BUFFER_WRITEI16 %702, %704, %707, tbuffer
+  JUMP bb_104
+bb_104:
+  STORE_DOUBLE R5, 158
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_107
+  %727 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %727, 8i, 0i, 2i, undef, exit(189)
+  %730 = BUFFER_READU16 %727, 8i, tbuffer
+  %731 = INT_TO_NUM %730
+  STORE_DOUBLE R6, %731
+  STORE_TAG R6, tnumber
+  JUMP bb_108
+bb_108:
+  CHECK_SAFE_ENV bb_fallback_111
+  CHECK_TAG R5, tnumber, exit(196)
+  CHECK_TAG R6, tnumber, exit(196)
+  %756 = LOAD_POINTER R0
+  %757 = LOAD_DOUBLE R5
+  %758 = NUM_TO_INT %757
+  CHECK_BUFFER_LEN %756, %758, 0i, 2i, undef, exit(196)
+  %760 = LOAD_DOUBLE R6
+  %761 = NUM_TO_UINT %760
+  BUFFER_WRITEI16 %756, %758, %761, tbuffer
+  JUMP bb_112
+bb_112:
+  STORE_DOUBLE R5, 12
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_115
+  %785 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %785, 12i, 0i, 4i, undef, exit(203)
+  %789 = LOAD_DOUBLE R1
+  %790 = NUM_TO_UINT %789
+  BUFFER_WRITEI32 %785, 12i, %790, tbuffer
+  JUMP bb_116
+bb_116:
+  STORE_DOUBLE R5, 164
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_119
+  %812 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %812, 12i, 0i, 4i, undef, exit(211)
+  %815 = BUFFER_READI32 %812, 12i, tbuffer
+  %816 = INT_TO_NUM %815
+  STORE_DOUBLE R6, %816
+  STORE_TAG R6, tnumber
+  JUMP bb_120
+bb_120:
+  CHECK_SAFE_ENV bb_fallback_123
+  CHECK_TAG R5, tnumber, exit(218)
+  CHECK_TAG R6, tnumber, exit(218)
+  %841 = LOAD_POINTER R0
+  %842 = LOAD_DOUBLE R5
+  %843 = NUM_TO_INT %842
+  CHECK_BUFFER_LEN %841, %843, 0i, 8i, undef, exit(218)
+  %845 = LOAD_DOUBLE R6
+  BUFFER_WRITEF64 %841, %843, %845, tbuffer
+  JUMP bb_124
+bb_124:
+  STORE_DOUBLE R5, 172
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_127
+  %865 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %865, 12i, 0i, 4i, undef, exit(225)
+  %868 = BUFFER_READI32 %865, 12i, tbuffer
+  %869 = INT_TO_NUM %868
+  STORE_DOUBLE R6, %869
+  STORE_TAG R6, tnumber
+  JUMP bb_128
+bb_128:
+  CHECK_SAFE_ENV bb_fallback_131
+  CHECK_TAG R5, tnumber, exit(232)
+  CHECK_TAG R6, tnumber, exit(232)
+  %894 = LOAD_POINTER R0
+  %895 = LOAD_DOUBLE R5
+  %896 = NUM_TO_INT %895
+  CHECK_BUFFER_LEN %894, %896, 0i, 4i, undef, exit(232)
+  %898 = LOAD_DOUBLE R6
+  %899 = NUM_TO_UINT %898
+  BUFFER_WRITEI32 %894, %896, %899, tbuffer
+  JUMP bb_132
+bb_132:
+  STORE_DOUBLE R5, 176
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_135
+  %919 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %919, 12i, 0i, 4i, undef, exit(239)
+  %922 = BUFFER_READI32 %919, 12i, tbuffer
+  %923 = INT_TO_NUM %922
+  STORE_DOUBLE R6, %923
+  STORE_TAG R6, tnumber
+  JUMP bb_136
+bb_136:
+  CHECK_SAFE_ENV bb_fallback_139
+  CHECK_TAG R5, tnumber, exit(246)
+  CHECK_TAG R6, tnumber, exit(246)
+  %948 = LOAD_POINTER R0
+  %949 = LOAD_DOUBLE R5
+  %950 = NUM_TO_INT %949
+  CHECK_BUFFER_LEN %948, %950, 0i, 4i, undef, exit(246)
+  %952 = LOAD_DOUBLE R6
+  %953 = NUM_TO_UINT %952
+  BUFFER_WRITEI32 %948, %950, %953, tbuffer
+  JUMP bb_140
+bb_140:
+  STORE_DOUBLE R5, 20
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_143
+  %977 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %977, 20i, 0i, 4i, undef, exit(253)
+  %981 = LOAD_DOUBLE R1
+  %982 = NUM_TO_UINT %981
+  BUFFER_WRITEI32 %977, 20i, %982, tbuffer
+  JUMP bb_144
+bb_144:
+  STORE_DOUBLE R5, 180
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_147
+  %1004 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %1004, 20i, 0i, 4i, undef, exit(261)
+  %1007 = BUFFER_READI32 %1004, 20i, tbuffer
+  %1008 = UINT_TO_NUM %1007
+  STORE_DOUBLE R6, %1008
+  STORE_TAG R6, tnumber
+  JUMP bb_148
+bb_148:
+  CHECK_SAFE_ENV bb_fallback_151
+  CHECK_TAG R5, tnumber, exit(268)
+  CHECK_TAG R6, tnumber, exit(268)
+  %1033 = LOAD_POINTER R0
+  %1034 = LOAD_DOUBLE R5
+  %1035 = NUM_TO_INT %1034
+  CHECK_BUFFER_LEN %1033, %1035, 0i, 8i, undef, exit(268)
+  %1037 = LOAD_DOUBLE R6
+  BUFFER_WRITEF64 %1033, %1035, %1037, tbuffer
+  JUMP bb_152
+bb_152:
+  STORE_DOUBLE R5, 188
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_155
+  %1057 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %1057, 20i, 0i, 4i, undef, exit(275)
+  %1060 = BUFFER_READI32 %1057, 20i, tbuffer
+  %1061 = UINT_TO_NUM %1060
+  STORE_DOUBLE R6, %1061
+  STORE_TAG R6, tnumber
+  JUMP bb_156
+bb_156:
+  CHECK_SAFE_ENV bb_fallback_159
+  CHECK_TAG R5, tnumber, exit(282)
+  CHECK_TAG R6, tnumber, exit(282)
+  %1086 = LOAD_POINTER R0
+  %1087 = LOAD_DOUBLE R5
+  %1088 = NUM_TO_INT %1087
+  CHECK_BUFFER_LEN %1086, %1088, 0i, 4i, undef, exit(282)
+  %1090 = LOAD_DOUBLE R6
+  %1091 = NUM_TO_UINT %1090
+  BUFFER_WRITEI32 %1086, %1088, %1091, tbuffer
+  JUMP bb_160
+bb_160:
+  STORE_DOUBLE R5, 192
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_163
+  %1111 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %1111, 20i, 0i, 4i, undef, exit(289)
+  %1114 = BUFFER_READI32 %1111, 20i, tbuffer
+  %1115 = UINT_TO_NUM %1114
+  STORE_DOUBLE R6, %1115
+  STORE_TAG R6, tnumber
+  JUMP bb_164
+bb_164:
+  CHECK_SAFE_ENV bb_fallback_167
+  CHECK_TAG R5, tnumber, exit(296)
+  CHECK_TAG R6, tnumber, exit(296)
+  %1140 = LOAD_POINTER R0
+  %1141 = LOAD_DOUBLE R5
+  %1142 = NUM_TO_INT %1141
+  CHECK_BUFFER_LEN %1140, %1142, 0i, 4i, undef, exit(296)
+  %1144 = LOAD_DOUBLE R6
+  %1145 = NUM_TO_UINT %1144
+  BUFFER_WRITEI32 %1140, %1142, %1145, tbuffer
+  JUMP bb_168
+bb_168:
+  STORE_DOUBLE R5, 28
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_171
+  %1169 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %1169, 28i, 0i, 4i, undef, exit(303)
+  %1173 = LOAD_DOUBLE R2
+  %1174 = NUM_TO_FLOAT %1173
+  BUFFER_WRITEF32 %1169, 28i, %1174, tbuffer
+  JUMP bb_172
+bb_172:
+  STORE_DOUBLE R5, 196
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_175
+  %1196 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %1196, 28i, 0i, 4i, undef, exit(311)
+  %1199 = BUFFER_READF32 %1196, 28i, tbuffer
+  %1200 = FLOAT_TO_NUM %1199
+  STORE_DOUBLE R6, %1200
+  STORE_TAG R6, tnumber
+  JUMP bb_176
+bb_176:
+  CHECK_SAFE_ENV bb_fallback_179
+  CHECK_TAG R5, tnumber, exit(318)
+  CHECK_TAG R6, tnumber, exit(318)
+  %1225 = LOAD_POINTER R0
+  %1226 = LOAD_DOUBLE R5
+  %1227 = NUM_TO_INT %1226
+  CHECK_BUFFER_LEN %1225, %1227, 0i, 8i, undef, exit(318)
+  %1229 = LOAD_DOUBLE R6
+  BUFFER_WRITEF64 %1225, %1227, %1229, tbuffer
+  JUMP bb_180
+bb_180:
+  STORE_DOUBLE R5, 196
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_183
+  %1249 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %1249, 28i, 0i, 4i, undef, exit(325)
+  %1252 = BUFFER_READF32 %1249, 28i, tbuffer
+  %1253 = FLOAT_TO_NUM %1252
+  STORE_DOUBLE R6, %1253
+  STORE_TAG R6, tnumber
+  JUMP bb_184
+bb_184:
+  CHECK_SAFE_ENV bb_fallback_187
+  CHECK_TAG R5, tnumber, exit(332)
+  CHECK_TAG R6, tnumber, exit(332)
+  %1278 = LOAD_POINTER R0
+  %1279 = LOAD_DOUBLE R5
+  %1280 = NUM_TO_INT %1279
+  CHECK_BUFFER_LEN %1278, %1280, 0i, 4i, undef, exit(332)
+  %1282 = LOAD_DOUBLE R6
+  %1283 = NUM_TO_FLOAT %1282
+  BUFFER_WRITEF32 %1278, %1280, %1283, tbuffer
+  JUMP bb_188
+bb_188:
+  STORE_DOUBLE R5, 32
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_191
+  %1307 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %1307, 32i, 0i, 8i, undef, exit(339)
+  %1311 = LOAD_DOUBLE R2
+  BUFFER_WRITEF64 %1307, 32i, %1311, tbuffer
+  JUMP bb_192
+bb_192:
+  STORE_DOUBLE R5, 204
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_195
+  %1333 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %1333, 32i, 0i, 8i, undef, exit(347)
+  %1336 = BUFFER_READF64 %1333, 32i, tbuffer
+  STORE_DOUBLE R6, %1336
+  STORE_TAG R6, tnumber
+  JUMP bb_196
+bb_196:
+  CHECK_SAFE_ENV bb_fallback_199
+  CHECK_TAG R5, tnumber, exit(354)
+  CHECK_TAG R6, tnumber, exit(354)
+  %1361 = LOAD_POINTER R0
+  %1362 = LOAD_DOUBLE R5
+  %1363 = NUM_TO_INT %1362
+  CHECK_BUFFER_LEN %1361, %1363, 0i, 8i, undef, exit(354)
+  %1365 = LOAD_DOUBLE R6
+  BUFFER_WRITEF64 %1361, %1363, %1365, tbuffer
+  JUMP bb_200
+bb_200:
+  STORE_DOUBLE R5, 204
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_203
+  %1385 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %1385, 32i, 0i, 8i, undef, exit(361)
+  %1388 = BUFFER_READF64 %1385, 32i, tbuffer
+  STORE_DOUBLE R6, %1388
+  STORE_TAG R6, tnumber
+  JUMP bb_204
+bb_204:
+  CHECK_SAFE_ENV bb_fallback_207
+  CHECK_TAG R5, tnumber, exit(368)
+  CHECK_TAG R6, tnumber, exit(368)
+  %1413 = LOAD_POINTER R0
+  %1414 = LOAD_DOUBLE R5
+  %1415 = NUM_TO_INT %1414
+  CHECK_BUFFER_LEN %1413, %1415, 0i, 4i, undef, exit(368)
+  %1417 = LOAD_DOUBLE R6
+  %1418 = NUM_TO_FLOAT %1417
+  BUFFER_WRITEF32 %1413, %1415, %1418, tbuffer
+  JUMP bb_208
+bb_208:
   INTERRUPT 372u
   RETURN R0, 0i
 )"
@@ -7859,34 +10676,97 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %11 = LOAD_DOUBLE R1
   %12 = NUM_TO_UINT %11
-  %24 = LOAD_POINTER R0
-  %26 = TRUNCATE_UINT %12
-  CHECK_BUFFER_LEN %24, %26, 0i, 4i, undef, bb_exit_9
+  JUMP bb_linear_27
+bb_linear_27:
+  %167 = LOAD_POINTER R0
+  %169 = TRUNCATE_UINT %12
+  CHECK_BUFFER_LEN %167, %169, 0i, 4i, undef, bb_exit_28
    ; exit sync: R5, {%12}
-  %28 = BUFFER_READI32 %24, %26, tbuffer
-  %29 = INT_TO_NUM %28
-  STORE_DOUBLE R3, %29
+  %171 = BUFFER_READI32 %167, %169, tbuffer
+  %172 = INT_TO_NUM %171
+  STORE_DOUBLE R3, %172
   STORE_TAG R3, tnumber
-  CHECK_BUFFER_LEN %24, %28, 0i, 4i, undef, exit(15)
-  %42 = BUFFER_READI32 %24, %28, tbuffer
-  %43 = UINT_TO_NUM %42
-  STORE_DOUBLE R4, %43
+  CHECK_BUFFER_LEN %167, %171, 0i, 4i, undef, bb_exit_29
+   ; exit sync: R5, {%12}
+  %183 = BUFFER_READI32 %167, %171, tbuffer
+  %184 = UINT_TO_NUM %183
+  STORE_DOUBLE R4, %184
   STORE_TAG R4, tnumber
-  CHECK_BUFFER_LEN %24, %42, 0i, 4i, undef, exit(22)
-  %56 = BUFFER_READI32 %24, %42, tbuffer
-  %57 = INT_TO_NUM %56
-  STORE_SPLIT_TVALUE R5, tnumber, %57
-  %64 = LOAD_POINTER R2
-  %65 = STRING_LEN %64
-  CHECK_BUFFER_LEN %24, %65, 0i, 4i, undef, bb_exit_10
-   ; exit sync: R8, {%65}
-  %79 = BUFFER_READI32 %24, %65, tbuffer
-  %80 = UINT_TO_NUM %79
-  STORE_DOUBLE R6, %80
+  CHECK_BUFFER_LEN %167, %183, 0i, 4i, undef, bb_exit_30
+   ; exit sync: R5, {%12}
+  %195 = BUFFER_READI32 %167, %183, tbuffer
+  %196 = INT_TO_NUM %195
+  STORE_SPLIT_TVALUE R5, tnumber, %196
+  %201 = LOAD_POINTER R2
+  %202 = STRING_LEN %201
+  CHECK_BUFFER_LEN %167, %202, 0i, 4i, undef, bb_exit_31
+   ; exit sync: R8, {%202}
+  %214 = BUFFER_READI32 %167, %202, tbuffer
+  %215 = UINT_TO_NUM %214
+  STORE_DOUBLE R6, %215
   STORE_TAG R6, tnumber
+  INTERRUPT 38u
+  RETURN R3, 4i
+bb_4:
+  CHECK_SAFE_ENV bb_fallback_7
+  CHECK_TAG R5, tnumber, exit(9)
+  %38 = LOAD_POINTER R0
+  %39 = LOAD_DOUBLE R5
+  %40 = NUM_TO_INT %39
+  CHECK_BUFFER_LEN %38, %40, 0i, 4i, undef, exit(9)
+  %42 = BUFFER_READI32 %38, %40, tbuffer
+  %43 = INT_TO_NUM %42
+  STORE_DOUBLE R3, %43
+  STORE_TAG R3, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_SAFE_ENV bb_fallback_11
+  CHECK_TAG R3, tnumber, exit(15)
+  %64 = LOAD_POINTER R0
+  %65 = LOAD_DOUBLE R3
+  %66 = NUM_TO_INT %65
+  CHECK_BUFFER_LEN %64, %66, 0i, 4i, undef, exit(15)
+  %68 = BUFFER_READI32 %64, %66, tbuffer
+  %69 = UINT_TO_NUM %68
+  STORE_DOUBLE R4, %69
+  STORE_TAG R4, tnumber
+  JUMP bb_12
+bb_12:
+  CHECK_SAFE_ENV bb_fallback_15
+  CHECK_TAG R4, tnumber, exit(22)
+  %92 = LOAD_POINTER R0
+  %93 = LOAD_DOUBLE R4
+  %94 = NUM_TO_INT %93
+  CHECK_BUFFER_LEN %92, %94, 0i, 4i, undef, exit(22)
+  %96 = BUFFER_READI32 %92, %94, tbuffer
+  %97 = INT_TO_NUM %96
+  STORE_DOUBLE R5, %97
+  STORE_TAG R5, tnumber
+  JUMP bb_16
+bb_16:
+  CHECK_SAFE_ENV bb_fallback_19
+  %118 = LOAD_POINTER R2
+  %119 = STRING_LEN %118
+  %120 = INT_TO_NUM %119
+  STORE_DOUBLE R8, %120
+  STORE_TAG R8, tnumber
+  JUMP bb_20
+bb_20:
+  CHECK_SAFE_ENV bb_fallback_23
+  CHECK_TAG R8, tnumber, exit(34)
+  %141 = LOAD_POINTER R0
+  %142 = LOAD_DOUBLE R8
+  %143 = NUM_TO_INT %142
+  CHECK_BUFFER_LEN %141, %143, 0i, 4i, undef, exit(34)
+  %145 = BUFFER_READI32 %141, %143, tbuffer
+  %146 = UINT_TO_NUM %145
+  STORE_DOUBLE R6, %146
+  STORE_TAG R6, tnumber
+  JUMP bb_24
+bb_24:
   INTERRUPT 38u
   RETURN R3, 4i
 )"
@@ -7919,26 +10799,140 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   %8 = LOAD_FLOAT R0, 0i
   %9 = FLOAT_TO_NUM %8
   %15 = MUL_NUM %9, 0.59999999999999998
+  STORE_DOUBLE R6, %15
+  STORE_TAG R6, tnumber
   %20 = LOAD_FLOAT R1, 4i
   %21 = FLOAT_TO_NUM %20
+  STORE_DOUBLE R9, %21
+  STORE_TAG R9, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   %28 = INVOKE_LIBM 24u, %21
-  %35 = MUL_NUM %28, 0.40000000000000002
-  %44 = ADD_NUM %15, %35
-  %50 = ADD_NUM %44, 0
-  %57 = INVOKE_LIBM 9u, %50
-  %105 = ADD_NUM %44, 1
-  %112 = INVOKE_LIBM 9u, %105
-  %160 = ADD_NUM %44, 2
-  %167 = INVOKE_LIBM 9u, %160
-  %181 = NUM_TO_FLOAT %57
-  %182 = NUM_TO_FLOAT %112
-  %183 = NUM_TO_FLOAT %167
-  STORE_VECTOR R2, %181, %182, %183
+  JUMP bb_linear_31
+bb_linear_31:
+  %262 = MUL_NUM %28, 0.40000000000000002
+  %268 = ADD_NUM %15, %262
+  %271 = ADD_NUM %268, 0
+  %275 = INVOKE_LIBM 9u, %271
+  %307 = ADD_NUM %268, 1
+  %311 = INVOKE_LIBM 9u, %307
+  %343 = ADD_NUM %268, 2
+  %347 = INVOKE_LIBM 9u, %343
+  %361 = NUM_TO_FLOAT %275
+  %362 = NUM_TO_FLOAT %311
+  %363 = NUM_TO_FLOAT %347
+  STORE_VECTOR R2, %361, %362, %363
   STORE_TAG R2, tvector
+  INTERRUPT 52u
+  RETURN R2, 1i
+bb_4:
+  CHECK_TAG R8, tnumber, exit(9)
+  %44 = LOAD_DOUBLE R8
+  %45 = MUL_NUM %44, 0.40000000000000002
+  STORE_DOUBLE R7, %45
+  STORE_TAG R7, tnumber
+  CHECK_TAG R6, tnumber, exit(10)
+  %52 = LOAD_DOUBLE R6
+  %54 = ADD_NUM %52, %45
+  STORE_DOUBLE R5, %54
+  STORE_TAG R5, tnumber
+  %60 = ADD_NUM %54, 0
+  STORE_DOUBLE R4, %60
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %67 = INVOKE_LIBM 9u, %60
+  STORE_DOUBLE R3, %67
+  STORE_TAG R3, tnumber
+  JUMP bb_8
+bb_8:
+  %83 = LOAD_FLOAT R0, 0i
+  %84 = FLOAT_TO_NUM %83
+  STORE_DOUBLE R8, %84
+  STORE_TAG R8, tnumber
+  %90 = MUL_NUM %84, 0.59999999999999998
+  STORE_DOUBLE R7, %90
+  STORE_TAG R7, tnumber
+  %95 = LOAD_FLOAT R1, 4i
+  %96 = FLOAT_TO_NUM %95
+  STORE_DOUBLE R10, %96
+  STORE_TAG R10, tnumber
+  CHECK_SAFE_ENV bb_fallback_11
+  %103 = INVOKE_LIBM 24u, %96
+  STORE_DOUBLE R9, %103
+  STORE_TAG R9, tnumber
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R9, tnumber, exit(25)
+  %119 = LOAD_DOUBLE R9
+  %120 = MUL_NUM %119, 0.40000000000000002
+  STORE_DOUBLE R8, %120
+  STORE_TAG R8, tnumber
+  CHECK_TAG R7, tnumber, exit(26)
+  %127 = LOAD_DOUBLE R7
+  %129 = ADD_NUM %127, %120
+  STORE_DOUBLE R6, %129
+  STORE_TAG R6, tnumber
+  %135 = ADD_NUM %129, 1
+  STORE_DOUBLE R5, %135
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_15
+  %142 = INVOKE_LIBM 9u, %135
+  STORE_DOUBLE R4, %142
+  STORE_TAG R4, tnumber
+  JUMP bb_16
+bb_16:
+  %158 = LOAD_FLOAT R0, 0i
+  %159 = FLOAT_TO_NUM %158
+  STORE_DOUBLE R9, %159
+  STORE_TAG R9, tnumber
+  %165 = MUL_NUM %159, 0.59999999999999998
+  STORE_DOUBLE R8, %165
+  STORE_TAG R8, tnumber
+  %170 = LOAD_FLOAT R1, 4i
+  %171 = FLOAT_TO_NUM %170
+  STORE_DOUBLE R11, %171
+  STORE_TAG R11, tnumber
+  CHECK_SAFE_ENV bb_fallback_19
+  %178 = INVOKE_LIBM 24u, %171
+  STORE_DOUBLE R10, %178
+  STORE_TAG R10, tnumber
+  JUMP bb_20
+bb_20:
+  CHECK_TAG R10, tnumber, exit(41)
+  %194 = LOAD_DOUBLE R10
+  %195 = MUL_NUM %194, 0.40000000000000002
+  STORE_DOUBLE R9, %195
+  STORE_TAG R9, tnumber
+  CHECK_TAG R8, tnumber, exit(42)
+  %202 = LOAD_DOUBLE R8
+  %204 = ADD_NUM %202, %195
+  STORE_DOUBLE R7, %204
+  STORE_TAG R7, tnumber
+  %210 = ADD_NUM %204, 2
+  STORE_DOUBLE R6, %210
+  STORE_TAG R6, tnumber
+  CHECK_SAFE_ENV bb_fallback_23
+  %217 = INVOKE_LIBM 9u, %210
+  STORE_DOUBLE R5, %217
+  STORE_TAG R5, tnumber
+  JUMP bb_24
+bb_24:
+  CHECK_SAFE_ENV bb_fallback_27
+  CHECK_TAG R3, tnumber, exit(49)
+  CHECK_TAG R4, tnumber, exit(49)
+  CHECK_TAG R5, tnumber, exit(49)
+  %238 = LOAD_DOUBLE R3
+  %239 = LOAD_DOUBLE R4
+  %240 = LOAD_DOUBLE R5
+  %241 = NUM_TO_FLOAT %238
+  %242 = NUM_TO_FLOAT %239
+  %243 = NUM_TO_FLOAT %240
+  STORE_VECTOR R2, %241, %242, %243
+  STORE_TAG R2, tvector
+  JUMP bb_28
+bb_28:
   INTERRUPT 52u
   RETURN R2, 1i
 )"
@@ -7970,23 +10964,102 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %7 = LOAD_TVALUE R0, 0i, tvector
   %8 = DOT_VEC %7, %7
   %9 = SQRT_FLOAT %8
   %10 = FLOAT_TO_NUM %9
-  %17 = MUL_NUM %10, 3
-  %23 = ADD_NUM %17, 6
-  %30 = INVOKE_LIBM 24u, %23
-  %53 = ADD_NUM %17, 1
-  %60 = INVOKE_LIBM 24u, %53
-  %83 = ADD_NUM %17, 2
-  %90 = INVOKE_LIBM 24u, %83
-  %104 = NUM_TO_FLOAT %30
-  %105 = NUM_TO_FLOAT %60
-  %106 = NUM_TO_FLOAT %90
-  STORE_VECTOR R1, %104, %105, %106
+  JUMP bb_linear_31
+bb_linear_31:
+  %191 = MUL_NUM %10, 3
+  %194 = ADD_NUM %191, 6
+  %198 = INVOKE_LIBM 24u, %194
+  %216 = ADD_NUM %191, 1
+  %220 = INVOKE_LIBM 24u, %216
+  %238 = ADD_NUM %191, 2
+  %242 = INVOKE_LIBM 24u, %238
+  %256 = NUM_TO_FLOAT %198
+  %257 = NUM_TO_FLOAT %220
+  %258 = NUM_TO_FLOAT %242
+  STORE_VECTOR R1, %256, %257, %258
   STORE_TAG R1, tvector
+  INTERRUPT 37u
+  RETURN R1, 1i
+bb_4:
+  CHECK_TAG R5, tnumber, exit(5)
+  %28 = LOAD_DOUBLE R5
+  %29 = MUL_NUM %28, 3
+  STORE_DOUBLE R4, %29
+  STORE_TAG R4, tnumber
+  %35 = ADD_NUM %29, 6
+  STORE_DOUBLE R3, %35
+  STORE_TAG R3, tnumber
+  CHECK_SAFE_ENV bb_fallback_7
+  %42 = INVOKE_LIBM 24u, %35
+  STORE_DOUBLE R2, %42
+  STORE_TAG R2, tnumber
+  JUMP bb_8
+bb_8:
+  CHECK_SAFE_ENV bb_fallback_11
+  %59 = LOAD_TVALUE R0, 0i, tvector
+  %60 = DOT_VEC %59, %59
+  %61 = SQRT_FLOAT %60
+  %62 = FLOAT_TO_NUM %61
+  STORE_DOUBLE R6, %62
+  STORE_TAG R6, tnumber
+  JUMP bb_12
+bb_12:
+  CHECK_TAG R6, tnumber, exit(16)
+  %80 = LOAD_DOUBLE R6
+  %81 = MUL_NUM %80, 3
+  STORE_DOUBLE R5, %81
+  STORE_TAG R5, tnumber
+  %87 = ADD_NUM %81, 1
+  STORE_DOUBLE R4, %87
+  STORE_TAG R4, tnumber
+  CHECK_SAFE_ENV bb_fallback_15
+  %94 = INVOKE_LIBM 24u, %87
+  STORE_DOUBLE R3, %94
+  STORE_TAG R3, tnumber
+  JUMP bb_16
+bb_16:
+  CHECK_SAFE_ENV bb_fallback_19
+  %111 = LOAD_TVALUE R0, 0i, tvector
+  %112 = DOT_VEC %111, %111
+  %113 = SQRT_FLOAT %112
+  %114 = FLOAT_TO_NUM %113
+  STORE_DOUBLE R7, %114
+  STORE_TAG R7, tnumber
+  JUMP bb_20
+bb_20:
+  CHECK_TAG R7, tnumber, exit(27)
+  %132 = LOAD_DOUBLE R7
+  %133 = MUL_NUM %132, 3
+  STORE_DOUBLE R6, %133
+  STORE_TAG R6, tnumber
+  %139 = ADD_NUM %133, 2
+  STORE_DOUBLE R5, %139
+  STORE_TAG R5, tnumber
+  CHECK_SAFE_ENV bb_fallback_23
+  %146 = INVOKE_LIBM 24u, %139
+  STORE_DOUBLE R4, %146
+  STORE_TAG R4, tnumber
+  JUMP bb_24
+bb_24:
+  CHECK_SAFE_ENV bb_fallback_27
+  CHECK_TAG R2, tnumber, exit(34)
+  CHECK_TAG R3, tnumber, exit(34)
+  CHECK_TAG R4, tnumber, exit(34)
+  %167 = LOAD_DOUBLE R2
+  %168 = LOAD_DOUBLE R3
+  %169 = LOAD_DOUBLE R4
+  %170 = NUM_TO_FLOAT %167
+  %171 = NUM_TO_FLOAT %168
+  %172 = NUM_TO_FLOAT %169
+  STORE_VECTOR R1, %170, %171, %172
+  STORE_TAG R1, tvector
+  JUMP bb_28
+bb_28:
   INTERRUPT 37u
   RETURN R1, 1i
 )"
@@ -8359,7 +11432,7 @@ end
         R"(
 ; function f($arg0, $arg1) line 2
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_1
   CHECK_TAG R0, tinteger, exit(2)
   CHECK_TAG R1, tinteger, exit(2)
   %7 = LOAD_INT64 R0
@@ -8368,6 +11441,8 @@ bb_bytecode_0:
   %11 = BITXOR_INT64 %9, %7
   STORE_INT64 R2, %11
   STORE_TAG R2, tinteger
+  JUMP bb_2
+bb_2:
   INTERRUPT 8u
   RETURN R2, 1i
 )"
@@ -8391,7 +11466,7 @@ end
         R"(
 ; function f($arg0, $arg1) line 2
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_1
   CHECK_TAG R0, tinteger, exit(2)
   CHECK_TAG R1, tinteger, exit(2)
   %7 = LOAD_INT64 R0
@@ -8401,6 +11476,8 @@ bb_bytecode_0:
   %12 = SELECT_INT64 %11, %7, %11, %7, gt
   STORE_INT64 R2, %12
   STORE_TAG R2, tinteger
+  JUMP bb_2
+bb_2:
   INTERRUPT 8u
   RETURN R2, 1i
 )"
@@ -8424,18 +11501,44 @@ end
         R"(
 ; function f($arg0, $arg1) line 2
 bb_bytecode_0:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_1
   CHECK_TAG R0, tinteger, exit(2)
   CHECK_TAG R1, tinteger, exit(2)
   %7 = LOAD_INT64 R0
   %8 = LOAD_INT64 R1
   %9 = SELECT_INT64 %7, %8, %8, %7, le
   %11 = SELECT_INT64 %7, %9, %9, %7, le
-  %24 = SELECT_INT64 %7, %8, %8, %7, gt
-  %26 = SELECT_INT64 %7, %24, %24, %7, gt
-  %37 = MUL_INT64 %11, %26
-  STORE_INT64 R2, %37
+  JUMP bb_linear_13
+bb_linear_13:
+  %92 = SELECT_INT64 %7, %8, %8, %7, gt
+  %93 = SELECT_INT64 %7, %92, %92, %7, gt
+  %104 = MUL_INT64 %11, %93
+  STORE_INT64 R2, %104
   STORE_TAG R2, tinteger
+  INTERRUPT 21u
+  RETURN R2, 1i
+bb_2:
+  CHECK_SAFE_ENV bb_fallback_5
+  CHECK_TAG R0, tinteger, exit(10)
+  CHECK_TAG R1, tinteger, exit(10)
+  %38 = LOAD_INT64 R0
+  %39 = LOAD_INT64 R1
+  %40 = SELECT_INT64 %38, %39, %39, %38, gt
+  %42 = SELECT_INT64 %38, %40, %40, %38, gt
+  STORE_INT64 R4, %42
+  STORE_TAG R4, tinteger
+  JUMP bb_6
+bb_6:
+  CHECK_SAFE_ENV bb_fallback_9
+  CHECK_TAG R3, tinteger, exit(18)
+  CHECK_TAG R4, tinteger, exit(18)
+  %67 = LOAD_INT64 R3
+  %68 = LOAD_INT64 R4
+  %69 = MUL_INT64 %67, %68
+  STORE_INT64 R2, %69
+  STORE_TAG R2, tinteger
+  JUMP bb_10
+bb_10:
   INTERRUPT 21u
   RETURN R2, 1i
 )"
@@ -8568,11 +11671,13 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  CHECK_SAFE_ENV bb_fallback_3
   %7 = LOAD_INT64 R0
   %8 = BITAND_INT64 %7, 5i
   STORE_INT64 R1, %8
   STORE_TAG R1, tinteger
+  JUMP bb_4
+bb_4:
   INTERRUPT 7u
   RETURN R1, 1i
 )"
@@ -8603,7 +11708,6 @@ bb_0:
 bb_2:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
   %6 = LOAD_TVALUE R0, 0i, tbuffer
   STORE_TVALUE R4, %6
   %8 = LOAD_TVALUE R1, 0i, tnumber
@@ -8612,6 +11716,7 @@ bb_bytecode_1:
   STORE_TVALUE R6, %10
   STORE_DOUBLE R7, 0
   STORE_TAG R7, tnumber
+  CHECK_SAFE_ENV bb_fallback_3
   CHECK_TAG R2, tnumber, exit(5)
   %21 = LOAD_POINTER R0
   %22 = LOAD_DOUBLE R1
@@ -8621,6 +11726,8 @@ bb_bytecode_1:
   %26 = NUM_TO_UINT %25
   BUFFER_WRITEI32 %21, %23, %26, tbuffer
   ADJUST_STACK_TO_REG R3, 0i
+  JUMP bb_4
+bb_4:
   INTERRUPT 8u
   RETURN R3, -1i
 )"
@@ -8715,14 +11822,29 @@ bb_0:
 bb_3:
   JUMP bb_bytecode_1
 bb_bytecode_1:
-  implicit CHECK_SAFE_ENV exit(0)
+  STORE_DOUBLE R4, 0
+  STORE_TAG R4, tnumber
+  STORE_INT64 R5, 2i
+  STORE_TAG R5, tinteger
+  CHECK_SAFE_ENV bb_fallback_4
   %17 = LOAD_POINTER R0
-  CHECK_BUFFER_LEN %17, 0i, 0i, 8i, undef, bb_exit_8
-   ; exit sync: R5, R4, {}
+  CHECK_BUFFER_LEN %17, 0i, 0i, 8i, undef, exit(4)
   BUFFER_WRITEI64 %17, 0i, 2i, tbuffer
-  %39 = LOAD_INT64 R1
-  JUMP_CMP_INT64 2i, %39, not_eq, bb_bytecode_2, bb_6
-bb_6:
+  JUMP bb_5
+bb_5:
+  CHECK_SAFE_ENV bb_fallback_8
+  %39 = LOAD_POINTER R0
+  CHECK_BUFFER_LEN %39, 0i, 0i, 8i, undef, exit(10)
+  %42 = BUFFER_READI64 %39, 0i, tbuffer
+  STORE_INT64 R2, %42
+  STORE_TAG R2, tinteger
+  JUMP bb_9
+bb_9:
+  CHECK_TAG R2, tinteger, bb_fallback_13
+  %64 = LOAD_INT64 R2
+  %65 = LOAD_INT64 R1
+  JUMP_CMP_INT64 %64, %65, not_eq, bb_bytecode_2, bb_12
+bb_12:
   STORE_DOUBLE R3, 1
   STORE_TAG R3, tnumber
   INTERRUPT 18u

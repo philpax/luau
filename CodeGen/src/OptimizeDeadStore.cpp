@@ -1227,6 +1227,7 @@ static void markDeadStoresInInst(RemoveDeadStoreState& state, IrBuilder& build, 
     case IrCmd::GET_TABLE:
     case IrCmd::SET_TABLE:
     case IrCmd::GET_CACHED_IMPORT:
+    case IrCmd::GET_IMPORT:
     case IrCmd::CONCAT:
     case IrCmd::INTERRUPT:
     case IrCmd::CHECK_GC:
@@ -1275,6 +1276,7 @@ static void markDeadStoresInInst(RemoveDeadStoreState& state, IrBuilder& build, 
     case IrCmd::SET_TABLE:
     case IrCmd::CONCAT:
     case IrCmd::GET_CACHED_IMPORT:
+    case IrCmd::GET_IMPORT:
     case IrCmd::FORGLOOP_FALLBACK:
     case IrCmd::FALLBACK_GETGLOBAL:
     case IrCmd::FALLBACK_SETGLOBAL:

@@ -1203,8 +1203,8 @@ IrOp translateFastCallN(IrBuilder& build, const Instruction* pc, int pcpos, bool
 
     IrOp fallback = build.fallbackBlock(pcpos);
 
-    // In unsafe environment, instead of retrying fastcall at 'pcpos' we side-exit directly to fallback sequence
-    build.checkSafeEnv(pcpos + getOpLength(opcode));
+    // Keep unsafe environments on the normal call path without requiring safeenv at block entry.
+    build.inst(IrCmd::CHECK_SAFE_ENV, fallback);
 
     BuiltinImplResult br = translateBuiltin(
         build, LuauBuiltinFunction(bfid), ra, arg, builtinArgs, builtinArg3, nparams, nresults, fallback, pcpos + getOpLength(opcode)
@@ -1218,14 +1218,6 @@ IrOp translateFastCallN(IrBuilder& build, const Instruction* pc, int pcpos, bool
             build.inst(IrCmd::ADJUST_STACK_TO_REG, build.vmReg(ra), build.constInt(br.actualResultCount));
         else
             build.inst(IrCmd::MARK_DEAD, build.vmReg(ra + br.actualResultCount), build.constInt(-1));
-
-        if (br.type != BuiltinImplType::UsesFallback)
-        {
-            // We ended up not using the fallback block, kill it
-            build.function.blockOp(fallback).kind = IrBlockKind::Dead;
-
-            return build.undef();
-        }
     }
     else
     {
@@ -1759,9 +1751,14 @@ void translateInstGetImport(IrBuilder& build, const Instruction* pc, int pcpos)
     int k = LUAU_INSN_D(*pc);
     uint32_t aux = pc[1];
 
-    build.checkSafeEnv(pcpos);
-
+    IrOp fallback = build.fallbackBlock(pcpos);
+    build.inst(IrCmd::CHECK_SAFE_ENV, fallback);
     build.inst(IrCmd::GET_CACHED_IMPORT, build.vmReg(ra), build.vmConst(k), build.constImport(aux), build.constUint(pcpos + 1));
+
+    IrOp next = build.blockAtInst(pcpos + 2);
+    FallbackStreamScope scope(build, fallback, next);
+    build.inst(IrCmd::GET_IMPORT, build.vmReg(ra), build.constImport(aux), build.constUint(pcpos + 1));
+    build.inst(IrCmd::JUMP, next);
 }
 
 void translateInstGetTableKS(IrBuilder& build, const Instruction* pc, int pcpos)

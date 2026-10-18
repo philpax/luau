@@ -75,6 +75,7 @@ static void visitVmRegDefsUses(T& visitor, IrFunction& function, IrInst& inst)
         visitor.def(OP_A(inst));
         break;
     case IrCmd::GET_CACHED_IMPORT:
+    case IrCmd::GET_IMPORT:
         visitor.def(OP_A(inst));
         break;
     case IrCmd::CONCAT:

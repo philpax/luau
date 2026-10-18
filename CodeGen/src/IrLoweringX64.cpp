@@ -2301,6 +2301,20 @@ void IrLoweringX64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
             CODEGEN_ASSERT(!"Unsupported instruction form");
         }
         break;
+    case IrCmd::GET_IMPORT:
+    {
+        ScopedSpills spillGuard(regs);
+
+        IrCallWrapperX64 callWrap(regs, build, index);
+        callWrap.addArgument(SizeX64::qword, rState);
+        callWrap.addArgument(SizeX64::qword, luauRegAddress(vmRegOp(OP_A(inst))));
+        callWrap.addArgument(SizeX64::dword, importOp(OP_B(inst)));
+        callWrap.addArgument(SizeX64::dword, uintOp(OP_C(inst)));
+        callWrap.call(qword[rNativeContext + offsetof(NativeContext, getImport)]);
+
+        emitUpdateBase(build);
+        break;
+    }
     case IrCmd::GET_CACHED_IMPORT:
     {
         regs.assertAllFree();
