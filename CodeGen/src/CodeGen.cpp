@@ -197,7 +197,7 @@ bool isSupported()
 #if LUA_VECTOR_DOUBLE == 1
     return false;
 #elif LUA_VECTOR_SIZE == 4
-#if !defined(CODEGEN_TARGET_X64)
+#if !defined(CODEGEN_TARGET_X64) && !defined(CODEGEN_TARGET_A64)
     return false;
 #endif
     if (LUA_EXTRA_SIZE != 2 || sizeof(TValue) != 24 || sizeof(LuaNode) != 48)

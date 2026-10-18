@@ -127,6 +127,134 @@ public:
 
 TEST_SUITE_BEGIN("IrAssembly");
 
+#if LUA_VECTOR_SIZE == 4 && !LUA_VECTOR_DOUBLE
+TEST_CASE_FIXTURE(IrAssemblyFixture, "A64Float4ValueCopy")
+{
+    options.target = AssemblyOptions::A64;
+    build.beginBlock(build.block(IrBlockKind::Internal));
+    IrOp value = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(21));
+    build.inst(IrCmd::STORE_TVALUE, build.vmReg(23), value);
+    build.inst(IrCmd::RETURN, build.vmReg(23), build.constInt(1));
+    updateUseCounts(build.function);
+
+    std::string text = lower();
+    CAPTURE(text);
+    CHECK(text.find("#504") != std::string::npos);
+    CHECK(text.find("#552") != std::string::npos);
+    CHECK(text.find("w16,[x17,#16]") != std::string::npos);
+    CHECK(text.find("w16") != std::string::npos);
+    CHECK(text.find("lowering failed") == std::string::npos);
+}
+
+TEST_CASE_FIXTURE(IrAssemblyFixture, "A64Float4SpillTags")
+{
+    options.target = AssemblyOptions::A64;
+    options.includeRegSpills = true;
+    build.beginBlock(build.block(IrBlockKind::Internal));
+    IrOp values[30];
+    for (int i = 0; i < 30; ++i)
+        values[i] = build.inst(IrCmd::TAG_VECTOR, build.inst(IrCmd::FLOAT_TO_VEC, build.constDouble(i + 0.125)));
+    for (int i = 0; i < 30; ++i)
+        build.inst(IrCmd::STORE_TVALUE, build.vmReg(i + 32), values[i]);
+    build.inst(IrCmd::RETURN, build.vmReg(32), build.constInt(30));
+    updateUseCounts(build.function);
+
+    std::string text = lower();
+    CAPTURE(text);
+    CHECK(text.find("spill %") != std::string::npos);
+    CHECK(text.find("restore %") != std::string::npos);
+    CHECK(text.find("w16,[sp") != std::string::npos);
+    CHECK(text.find("lowering failed") == std::string::npos);
+}
+
+TEST_CASE_FIXTURE(IrAssemblyFixture, "A64Float4ScopedSpillTags")
+{
+    options.target = AssemblyOptions::A64;
+    options.includeRegSpills = true;
+    build.beginBlock(build.block(IrBlockKind::Internal));
+    IrOp value = build.inst(IrCmd::TAG_VECTOR, build.inst(IrCmd::FLOAT_TO_VEC, build.constDouble(0.125)));
+    build.inst(IrCmd::CHECK_GC);
+    build.inst(IrCmd::STORE_TVALUE, build.vmReg(1), value);
+    build.inst(IrCmd::RETURN, build.vmReg(1), build.constInt(1));
+    updateUseCounts(build.function);
+
+    std::string text = lower();
+    CAPTURE(text);
+    CHECK(text.find("spill %") != std::string::npos);
+    CHECK(text.find("restore %") != std::string::npos);
+    CHECK(text.find("w16,[sp,#96]") != std::string::npos);
+    CHECK(text.find("w16,[sp,#700]") != std::string::npos);
+}
+
+TEST_CASE_FIXTURE(IrAssemblyFixture, "A64Float4TruthyTags")
+{
+    options.target = AssemblyOptions::A64;
+    build.beginBlock(build.block(IrBlockKind::Internal));
+    IrOp condition = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(0));
+    IrOp a = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(1));
+    IrOp b = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(2));
+    IrOp value = build.inst(IrCmd::SELECT_IF_TRUTHY, condition, a, b);
+    build.inst(IrCmd::STORE_TVALUE, build.vmReg(3), value);
+    build.inst(IrCmd::RETURN, build.vmReg(3), build.constInt(1));
+    updateUseCounts(build.function);
+
+    std::string text = lower();
+    CAPTURE(text);
+    CHECK(text.find("umov        w15,q31,#3") == std::string::npos);
+    CHECK(text.find("w15,[sp,#700]") != std::string::npos);
+    CHECK(text.find("w16,[x25,#88]") != std::string::npos);
+}
+
+TEST_CASE_FIXTURE(IrAssemblyFixture, "A64Float4LargeConstant")
+{
+    options.target = AssemblyOptions::A64;
+    build.beginBlock(build.block(IrBlockKind::Internal));
+    IrOp value = build.inst(IrCmd::LOAD_TVALUE, build.vmConst(10001));
+    build.inst(IrCmd::CHECK_GC);
+    build.inst(IrCmd::STORE_TVALUE, build.vmReg(255), value);
+    build.inst(IrCmd::RETURN, build.vmReg(255), build.constInt(1));
+    updateUseCounts(build.function);
+
+    std::string text = lower();
+    CAPTURE(text);
+    CHECK(text.find("#2025") != std::string::npos);
+    CHECK(text.find("w16,[x17,#16]") != std::string::npos);
+    CHECK(text.find("lowering failed") == std::string::npos);
+}
+
+TEST_CASE_FIXTURE(IrAssemblyFixture, "A64Float4UpvalueBarrierTag")
+{
+    options.target = AssemblyOptions::A64;
+    build.beginBlock(build.block(IrBlockKind::Internal));
+    IrOp value = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(0));
+    build.inst(IrCmd::SET_UPVALUE, build.vmUpvalue(1), value, build.undef());
+    build.inst(IrCmd::RETURN, build.vmReg(0), build.constInt(0));
+    updateUseCounts(build.function);
+
+    std::string text = lower();
+    CAPTURE(text);
+    CHECK(text.find("umov") == std::string::npos);
+    CHECK(text.find("w16,[sp,#700]") != std::string::npos);
+    CHECK(text.find("w14,[sp,#700]") != std::string::npos);
+    CHECK(text.find("blr") != std::string::npos);
+}
+
+TEST_CASE_FIXTURE(IrAssemblyFixture, "A64Float4DotIncludesW")
+{
+    options.target = AssemblyOptions::A64;
+    build.beginBlock(build.block(IrBlockKind::Internal));
+    IrOp a = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(0));
+    IrOp b = build.inst(IrCmd::LOAD_TVALUE, build.vmReg(1));
+    IrOp dot = build.inst(IrCmd::DOT_VEC, a, b);
+    build.inst(IrCmd::STORE_DOUBLE, build.vmReg(2), build.inst(IrCmd::FLOAT_TO_NUM, dot));
+    build.inst(IrCmd::RETURN, build.vmReg(2), build.constInt(1));
+    updateUseCounts(build.function);
+
+    std::string text = lower();
+    CHECK(text.find("[3]") != std::string::npos);
+}
+#endif
+
 TEST_CASE_FIXTURE(IrAssemblyFixture, "PreserveIntChainedFromDoubleVmReg")
 {
     IrOp entry = build.block(IrBlockKind::Internal);

@@ -320,7 +320,11 @@ IrLoweringA64::IrLoweringA64(LogBuilder* logger, AssemblyBuilderA64& build, Modu
     , helpers(helpers)
     , function(function)
     , stats(stats)
+#if LUA_VECTOR_SIZE == 4
+    , regs(logger, build, function, stats, {{x0, x15}, {q0, q7}, {q16, q31}})
+#else
     , regs(logger, build, function, stats, {{x0, x15}, {x16, x17}, {q0, q7}, {q16, q31}})
+#endif
     , valueTracker(logger, function)
 
 {
@@ -391,7 +395,7 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
 
         int addrOffset = HAS_OP_B(inst) ? intOp(OP_B(inst)) : 0;
         AddressA64 addr = tempAddr(OP_A(inst), addrOffset);
-        build.ldr(inst.regA64, addr);
+        emitLoadTValue(build, inst.regA64, addr);
         break;
     }
     case IrCmd::LOAD_ENV:
@@ -405,7 +409,7 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
 
         if (OP_B(inst).kind == IrOpKind::Inst)
         {
-            build.add(inst.regA64, inst.regA64, regOp(OP_B(inst)), kTValueSizeLog2); // implicit uxtw
+            emitAddScaled(build, inst.regA64, inst.regA64, regOp(OP_B(inst)), sizeof(TValue));
         }
         else if (OP_B(inst).kind == IrOpKind::Constant)
         {
@@ -452,7 +456,7 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
 
         // note: this may clobber OP_A(inst), so it's important that we don't use it after this
         build.ldr(inst.regA64, mem(regOp(OP_A(inst)), offsetof(LuaTable, node)));
-        build.add(inst.regA64, inst.regA64, temp2x, kLuaNodeSizeLog2); // "zero extend" temp2 to get a larger shift (top 32 bits are zero)
+        emitAddScaled(build, inst.regA64, inst.regA64, temp2x, sizeof(LuaNode));
         break;
     }
     case IrCmd::GET_HASH_NODE_ADDR:
@@ -471,7 +475,7 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
 
         // note: this may clobber OP_A(inst), so it's important that we don't use it after this
         build.ldr(inst.regA64, mem(regOp(OP_A(inst)), offsetof(LuaTable, node)));
-        build.add(inst.regA64, inst.regA64, temp2x, kLuaNodeSizeLog2); // "zero extend" temp2 to get a larger shift (top 32 bits are zero)
+        emitAddScaled(build, inst.regA64, inst.regA64, temp2x, sizeof(LuaNode));
         break;
     }
     case IrCmd::GET_CLOSURE_UPVAL_ADDR:
@@ -580,6 +584,9 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
         build.str(temp1, AddressA64(addr.base, addr.data + 0));
         build.str(temp2, AddressA64(addr.base, addr.data + 4));
         build.str(temp3, AddressA64(addr.base, addr.data + 8));
+#if LUA_VECTOR_SIZE == 4
+        build.str(wzr, AddressA64(addr.base, addr.data + 12));
+#endif
 
         if (HAS_OP_E(inst))
         {
@@ -592,8 +599,9 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
     case IrCmd::STORE_TVALUE:
     {
         int addrOffset = HAS_OP_C(inst) ? intOp(OP_C(inst)) : 0;
+        RegisterA64 value = regOp(OP_B(inst));
         AddressA64 addr = tempAddr(OP_A(inst), addrOffset);
-        build.str(regOp(OP_B(inst)), addr);
+        emitStoreTValue(build, value, addr);
         break;
     }
     case IrCmd::STORE_SPLIT_TVALUE:
@@ -1114,7 +1122,7 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
         inst.regA64 = regs.allocReg(KindA64::q, index);
 
         // Place lhs as the result, we will overwrite it with rhs if 'A' is falsy later
-        build.mov(inst.regA64, regOp(OP_B(inst)));
+        emitMoveTValue(build, inst.regA64, regOp(OP_B(inst)));
 
         // Get rhs register early, so a potential restore happens on both sides of a conditional control flow
         RegisterA64 c = regOp(OP_C(inst));
@@ -1123,7 +1131,7 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
         Label saveRhs, exit;
 
         // Check tag first
-        build.umov_4s(temp, regOp(OP_A(inst)), 3);
+        emitLoadTag(build, temp, regOp(OP_A(inst)));
         build.cmp(temp, uint16_t(LUA_TBOOLEAN));
 
         build.b(ConditionA64::UnsignedLess, saveRhs); // rhs if 'A' is nil
@@ -1134,7 +1142,7 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
         build.cbnz(temp, exit); // Keep lhs if 'A' is true
 
         build.setLabel(saveRhs);
-        build.mov(inst.regA64, c);
+        emitMoveTValue(build, inst.regA64, c);
 
         build.setLabel(exit);
         break;
@@ -1287,6 +1295,11 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
         build.faddp(inst.regA64, temps); // x+y
         build.dup_4s(temp, temp, 2);
         build.fadd(inst.regA64, inst.regA64, temps); // +z
+#if LUA_VECTOR_SIZE == 4
+        build.fmul(temp, regOp(OP_A(inst)), regOp(OP_B(inst)));
+        build.dup_4s(temp, temp, 3);
+        build.fadd(inst.regA64, inst.regA64, temps);
+#endif
         break;
     }
     case IrCmd::EXTRACT_VEC:
@@ -2065,7 +2078,7 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
             {
                 RegisterA64 temp = regs.allocTemp(KindA64::x);
 
-                uint32_t vec[4] = {asU32, asU32, asU32, 0};
+                uint32_t vec[4] = {asU32, asU32, asU32, LUA_VECTOR_SIZE == 4 ? asU32 : 0};
                 build.adr(temp, vec, sizeof(vec));
                 build.ldr(inst.regA64, temp);
             }
@@ -2089,7 +2102,11 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
             build.mov(inst.regA64, reg);
 
         build.mov(tempw, LUA_TVECTOR);
+#if LUA_VECTOR_SIZE == 4
+        build.str(tempw, valueTagAddress(inst.regA64));
+#else
         build.ins_4s(inst.regA64, tempw, 3);
+#endif
         break;
     }
     case IrCmd::TRUNCATE_UINT:
@@ -2109,7 +2126,7 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
         else if (OP_B(inst).kind == IrOpKind::Inst)
         {
             build.add(temp, rBase, uint16_t(vmRegOp(OP_A(inst)) * sizeof(TValue)));
-            build.add(temp, temp, regOp(OP_B(inst)), kTValueSizeLog2); // implicit uxtw
+            emitAddScaled(build, temp, temp, regOp(OP_B(inst)), sizeof(TValue));
             build.str(temp, mem(rState, offsetof(lua_State, top)));
         }
         else
@@ -2147,11 +2164,11 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
 
             build.ldr(x4, mem(rState, offsetof(lua_State, top)));
 
-            build.ldr(temp, mem(rBase, vmRegOp(OP_D(inst)) * sizeof(TValue)));
-            build.str(temp, mem(x4, 0));
+            emitLoadTValue(build, temp, mem(rBase, vmRegOp(OP_D(inst)) * sizeof(TValue)));
+            emitStoreTValue(build, temp, mem(x4, 0));
 
-            build.ldr(temp, mem(rBase, vmRegOp(OP_E(inst)) * sizeof(TValue)));
-            build.str(temp, mem(x4, sizeof(TValue)));
+            emitLoadTValue(build, temp, mem(rBase, vmRegOp(OP_E(inst)) * sizeof(TValue)));
+            emitStoreTValue(build, temp, mem(x4, sizeof(TValue)));
         }
         else
         {
@@ -2170,7 +2187,12 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
             build.ldr(x5, mem(rState, offsetof(lua_State, top)));
             build.sub(x5, x5, rBase);
             build.sub(x5, x5, uint16_t((vmRegOp(OP_B(inst)) + 1) * sizeof(TValue)));
+#if LUA_VECTOR_SIZE == 4
+            build.mov(x16, int(sizeof(TValue)));
+            build.udiv(x5, x5, x16);
+#else
             build.lsr(x5, x5, kTValueSizeLog2);
+#endif
         }
         else
             build.mov(w5, intOp(OP_F(inst)));
@@ -2361,10 +2383,10 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
         RegisterA64 tempTv = regs.allocTemp(KindA64::q);
 
         AddressA64 addrConst = tempAddr(OP_B(inst), 0);
-        build.ldr(tempTv, addrConst);
+        emitLoadTValue(build, tempTv, addrConst);
 
         AddressA64 addrReg = tempAddr(OP_A(inst), 0);
-        build.str(tempTv, addrReg);
+        emitStoreTValue(build, tempTv, addrReg);
 
         build.setLabel(exit);
         break;
@@ -2400,7 +2422,7 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
 
         build.setLabel(skip);
 
-        build.ldr(inst.regA64, temp1);
+        emitLoadTValue(build, inst.regA64, mem(temp1));
         break;
     }
     case IrCmd::SET_UPVALUE:
@@ -2412,7 +2434,7 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
         build.ldr(temp1, mem(rClosure, offsetof(Closure, l.uprefs) + sizeof(TValue) * vmUpvalueOp(OP_A(inst)) + offsetof(TValue, value.gc)));
 
         build.ldr(temp2, mem(temp1, offsetof(UpVal, v)));
-        build.str(regOp(OP_B(inst)), temp2);
+        emitStoreTValue(build, regOp(OP_B(inst)), mem(temp2));
 
         if (OP_C(inst).kind == IrOpKind::Undef || isGCO(tagOp(OP_C(inst))))
         {
@@ -2580,11 +2602,17 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
         RegisterA64 temp1w = castReg(KindA64::w, temp1);
         RegisterA64 temp2 = regs.allocTemp(KindA64::x);
 
+#if LUA_VECTOR_SIZE == 4
+        build.ldr(temp1, mem(regOp(OP_A(inst)), offsetof(LuaNode, key.value)));
+        build.ldr(castReg(KindA64::w, temp2), mem(regOp(OP_A(inst)), offsetof(LuaNode, key) + kOffsetOfTKeyTagNext));
+        build.ubfx(temp2, temp2, 0, kTKeyTagBits);
+#else
         static_assert(offsetof(LuaNode, key.value) == offsetof(LuaNode, key) && kOffsetOfTKeyTagNext >= 8 && kOffsetOfTKeyTagNext < 16);
         build.ldp(
             temp1, temp2, mem(regOp(OP_A(inst)), offsetof(LuaNode, key))
         ); // load key.value into temp1 and key.tt (alongside other bits) into temp2
         build.ubfx(temp2, temp2, (kOffsetOfTKeyTagNext - 8) * 8, kTKeyTagBits); // .tt is right before .next, and 8 bytes are skipped by ldp
+#endif
         build.cmp(temp2, uint16_t(LUA_TSTRING));
         build.b(ConditionA64::NotEqual, mismatch);
 
@@ -3017,8 +3045,8 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
         {
             // fast path: minimizes x1 adjustments
             // note that we skipped x1 computation for this specific case above
-            build.ldr(q0, mem(rBase, vmRegOp(OP_A(inst)) * sizeof(TValue)));
-            build.str(q0, mem(rBase, -int(sizeof(TValue))));
+            emitLoadTValue(build, q0, mem(rBase, vmRegOp(OP_A(inst)) * sizeof(TValue)));
+            emitStoreTValue(build, q0, mem(rBase, -int(sizeof(TValue))));
             build.mov(x1, rBase);
             build.mov(w2, 1);
             build.b(helpers.return_);
@@ -3027,8 +3055,13 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
         {
             for (int r = 0; r < intOp(OP_B(inst)); ++r)
             {
-                build.ldr(q0, mem(rBase, (vmRegOp(OP_A(inst)) + r) * sizeof(TValue)));
+                emitLoadTValue(build, q0, mem(rBase, (vmRegOp(OP_A(inst)) + r) * sizeof(TValue)));
+#if LUA_VECTOR_SIZE == 4
+                emitStoreTValue(build, q0, mem(x1));
+                build.add(x1, x1, uint16_t(sizeof(TValue)));
+#else
                 build.str(q0, mem(x1, sizeof(TValue), AddressKindA64::post));
+#endif
             }
             build.mov(w2, intOp(OP_B(inst)));
             build.b(helpers.return_);
@@ -3055,8 +3088,15 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
             }
 
             build.setLabel(repeatValueLoop);
+#if LUA_VECTOR_SIZE == 4
+            emitLoadTValue(build, q0, mem(x3));
+            emitStoreTValue(build, q0, mem(x1));
+            build.add(x3, x3, uint16_t(sizeof(TValue)));
+            build.add(x1, x1, uint16_t(sizeof(TValue)));
+#else
             build.ldr(q0, mem(x3, sizeof(TValue), AddressKindA64::post));
             build.str(q0, mem(x1, sizeof(TValue), AddressKindA64::post));
+#endif
             build.add(w2, w2, uint16_t(1));
             build.cmp(x3, x4);
             build.b(ConditionA64::CarryClear, repeatValueLoop); // CarryClear == UnsignedLess
@@ -3093,7 +3133,7 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
 
             // x4 = &array[index]
             build.ldr(x4, mem(x1, offsetof(LuaTable, array)));
-            build.add(x4, x4, w2, kTValueSizeLog2); // implicit uxtw
+            emitAddScaled(build, x4, x4, w2, sizeof(TValue));
 
             Label skipArray, skipArrayNil;
 
@@ -3123,8 +3163,8 @@ void IrLoweringA64::lowerInst(IrInst& inst, uint32_t index, const IrBlock& next)
             build.str(w6, mem(rBase, (ra + 3) * sizeof(TValue) + offsetof(TValue, tt)));
 
             // setobj2s(L, ra + 4, e);
-            build.ldr(q0, mem(x4, 0));
-            build.str(q0, mem(rBase, (ra + 4) * sizeof(TValue)));
+            emitLoadTValue(build, q0, mem(x4, 0));
+            emitStoreTValue(build, q0, mem(rBase, (ra + 4) * sizeof(TValue)));
 
             build.b(labelOp(OP_C(inst)));
 
@@ -4096,7 +4136,7 @@ void IrLoweringA64::checkObjectBarrierConditions(RegisterA64 object, RegisterA64
     {
         if (raOp.kind == IrOpKind::Inst)
         {
-            build.umov_4s(tempw, ra, 3);
+            emitLoadTag(build, tempw, ra);
         }
         else
         {

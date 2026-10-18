@@ -24,28 +24,29 @@ namespace A64
 {
 
 static const int8_t kInvalidSpill = 64;
+static constexpr uint64_t kSimdSpillMask = LUA_VECTOR_SIZE == 4 ? 7ull : 3ull;
 
 static int allocSpill(uint64_t& free, KindA64 kind)
 {
-    CODEGEN_ASSERT(kStackSize <= 256); // to support larger stack frames, we need to ensure qN is allocated at 16b boundary to fit in ldr/str encoding
-
     uint64_t search = free;
 
-    // qN registers use two consecutive slots
+    // SIMD payloads use consecutive 8-byte slots, with an additional tag slot in wide mode.
     if (kind == KindA64::q)
     {
-        // Make sure bit N is set only if bit N+1 is also set
+        // Wide values reserve payload and tag together; align payloads for scaled q accesses.
         search = free & (free >> 1);
-
-        // Prevent qN from allocating at stack/extra spill storage boundary (by reserving last stack slot)
+#if LUA_VECTOR_SIZE == 4
+        search &= (free >> 2) & 0x5555555555555555ull;
+#else
         search &= ~(1ull << (kSpillSlots - 1));
+#endif
     }
 
     int slot = countrz(search);
     if (slot == 64)
         return -1;
 
-    uint64_t mask = (kind == KindA64::q ? 3ull : 1ull) << (unsigned long long)slot;
+    uint64_t mask = (kind == KindA64::q ? kSimdSpillMask : 1ull) << (unsigned long long)slot;
 
     CODEGEN_ASSERT((free & mask) == mask);
     free &= ~mask;
@@ -55,8 +56,7 @@ static int allocSpill(uint64_t& free, KindA64 kind)
 
 static void freeSpill(uint64_t& free, KindA64 kind, uint8_t slot)
 {
-    // qN registers use two consecutive slots
-    uint64_t mask = (kind == KindA64::q ? 3ull : 1ull) << (unsigned long long)slot;
+    uint64_t mask = (kind == KindA64::q ? kSimdSpillMask : 1ull) << (unsigned long long)slot;
 
     CODEGEN_ASSERT((free & mask) == 0);
     free |= mask;
@@ -90,7 +90,7 @@ static int getReloadOffset(IrValueKind kind)
     LUAU_UNREACHABLE();
 }
 
-static AddressA64 getReloadAddress(ValueRestoreLocation location)
+static AddressA64 getReloadAddress(AssemblyBuilderA64& build, ValueRestoreLocation location)
 {
     IrOp op = location.op;
 
@@ -98,8 +98,17 @@ static AddressA64 getReloadAddress(ValueRestoreLocation location)
         return mem(rBase, vmRegOp(op) * sizeof(TValue) + getReloadOffset(location.kind));
 
     // loads are 4/8/16 bytes; we conservatively limit the offset to fit assuming a 4b index
-    if (op.kind == IrOpKind::VmConst && vmConstOp(op) * sizeof(TValue) <= AddressA64::kMaxOffset * 4)
-        return mem(rConstants, vmConstOp(op) * sizeof(TValue) + getReloadOffset(location.kind));
+    if (op.kind == IrOpKind::VmConst)
+    {
+        size_t offset = vmConstOp(op) * sizeof(TValue) + getReloadOffset(location.kind);
+        if (offset <= AddressA64::kMaxOffset * 4)
+            return mem(rConstants, int(offset));
+#if LUA_VECTOR_SIZE == 4
+        build.mov(x17, int(offset));
+        build.add(x17, rConstants, x17);
+        return mem(x17);
+#endif
+    }
 
     return AddressA64(xzr); // dummy
 }
@@ -412,7 +421,7 @@ void IrRegAllocA64::setupExitSyncEntry(uint32_t blockIdx)
             spills.push_back({arg.instIdx, arg.originalReg, arg.slot});
 
             // Mark the spill slot as occupied so restore() can free it
-            uint64_t mask = (arg.originalReg.kind == KindA64::q ? 3ull : 1ull) << (unsigned long long)arg.slot;
+            uint64_t mask = (arg.originalReg.kind == KindA64::q ? kSimdSpillMask : 1ull) << (unsigned long long)arg.slot;
             CODEGEN_ASSERT((freeSpillSlots & mask) == mask);
             freeSpillSlots &= ~mask;
         }
@@ -580,7 +589,10 @@ void IrRegAllocA64::restore(const IrRegAllocA64::Spill& s, RegisterA64 reg)
 
     if (s.slot >= 0)
     {
-        build.ldr(reg, mem(sp, sSpillArea.data + s.slot * 8));
+        if (reg.kind == KindA64::q)
+            emitLoadTValue(build, reg, mem(sp, sSpillArea.data + s.slot * 8));
+        else
+            build.ldr(reg, mem(sp, sSpillArea.data + s.slot * 8));
 
         if (s.slot != kInvalidSpill)
         {
@@ -601,7 +613,7 @@ void IrRegAllocA64::restore(const IrRegAllocA64::Spill& s, RegisterA64 reg)
         // When restoring the value, we allow cross-block restore because we have committed to the target location at spill time
         ValueRestoreLocation restoreLocation = function.findRestoreLocation(inst, /*limitToCurrentBlock*/ false);
 
-        AddressA64 addr = getReloadAddress(restoreLocation);
+        AddressA64 addr = getReloadAddress(build, restoreLocation);
         CODEGEN_ASSERT(addr.base != xzr);
 
         IrValueKind spillValueKind = getCmdValueKind(inst.cmd);
@@ -610,6 +622,8 @@ void IrRegAllocA64::restore(const IrRegAllocA64::Spill& s, RegisterA64 reg)
         {
             // Handle restore of an int/uint value from a location storing a double number
             RegisterA64 temp = allocTemp(KindA64::d);
+            // Allocation can spill a wide value and clobber the address scratch register.
+            addr = getReloadAddress(build, restoreLocation);
             build.ldr(temp, addr);
 
             if (restoreLocation.conversionCmd == IrCmd::INT_TO_NUM)
@@ -624,7 +638,10 @@ void IrRegAllocA64::restore(const IrRegAllocA64::Spill& s, RegisterA64 reg)
         }
         else
         {
-            build.ldr(reg, addr);
+            if (reg.kind == KindA64::q)
+                emitLoadTValue(build, reg, addr);
+            else
+                build.ldr(reg, addr);
         }
 
         if (logger && logger->options.includeRegSpills)
@@ -670,7 +687,10 @@ void IrRegAllocA64::spill(Set& set, uint32_t index, uint32_t targetInstIdx, bool
             int storeReg = vmRegOp(loc.op);
             AddressA64 addr = mem(rBase, storeReg * sizeof(TValue) + getReloadOffset(loc.kind));
 
-            build.str(def.regA64, addr);
+            if (def.regA64.kind == KindA64::q)
+                emitStoreTValue(build, def.regA64, addr);
+            else
+                build.str(def.regA64, addr);
 
             // Partial value store should not have an interpretation in VM/GC and is protected by 'nil' tag
             if (loc.kind != IrValueKind::Tvalue)
@@ -717,7 +737,10 @@ void IrRegAllocA64::spill(Set& set, uint32_t index, uint32_t targetInstIdx, bool
             error = true;
         }
 
-        build.str(def.regA64, mem(sp, sSpillArea.data + slot * 8));
+        if (def.regA64.kind == KindA64::q)
+            emitStoreTValue(build, def.regA64, mem(sp, sSpillArea.data + slot * 8));
+        else
+            build.str(def.regA64, mem(sp, sSpillArea.data + slot * 8));
 
         Spill s = {targetInstIdx, def.regA64, int8_t(slot)};
         spills.push_back(s);
@@ -728,8 +751,9 @@ void IrRegAllocA64::spill(Set& set, uint32_t index, uint32_t targetInstIdx, bool
         {
             stats->spillsToSlot++;
 
-            if (slot != kInvalidSpill && unsigned(slot + 1) > stats->maxSpillSlotsUsed)
-                stats->maxSpillSlotsUsed = slot + 1;
+            unsigned slotCount = def.regA64.kind == KindA64::q ? (LUA_VECTOR_SIZE == 4 ? 3 : 2) : 1;
+            if (slot != kInvalidSpill && unsigned(slot) + slotCount > stats->maxSpillSlotsUsed)
+                stats->maxSpillSlotsUsed = unsigned(slot) + slotCount;
         }
 
         if (logger && logger->options.includeRegSpills)

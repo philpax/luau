@@ -144,6 +144,12 @@ void AssemblyBuilderA64::add(RegisterA64 dst, RegisterA64 src1, RegisterA64 src2
 
 void AssemblyBuilderA64::add(RegisterA64 dst, RegisterA64 src1, uint16_t src2)
 {
+    while (src2 > kMaxImmediate)
+    {
+        placeI12("add", dst, src1, kMaxImmediate, 0b00'10001);
+        src1 = dst;
+        src2 -= kMaxImmediate;
+    }
     placeI12("add", dst, src1, src2, 0b00'10001);
 }
 
@@ -157,6 +163,12 @@ void AssemblyBuilderA64::sub(RegisterA64 dst, RegisterA64 src1, RegisterA64 src2
 
 void AssemblyBuilderA64::sub(RegisterA64 dst, RegisterA64 src1, uint16_t src2)
 {
+    while (src2 > kMaxImmediate)
+    {
+        placeI12("sub", dst, src1, kMaxImmediate, 0b10'10001);
+        src1 = dst;
+        src2 -= kMaxImmediate;
+    }
     placeI12("sub", dst, src1, src2, 0b10'10001);
 }
 
@@ -1454,7 +1466,7 @@ void AssemblyBuilderA64::placeA(const char* name, RegisterA64 dst, AddressA64 sr
         place(dst.index | (src.base.index << 5) | (0b011'0'10 << 10) | (src.offset.index << 16) | (1 << 21) | (opsize << 22));
         break;
     case AddressKindA64::imm:
-        if (unsigned(src.data >> sizelog) < 1024 && (src.data & ((1 << sizelog) - 1)) == 0)
+        if (unsigned(src.data >> sizelog) < 4096 && (src.data & ((1 << sizelog) - 1)) == 0)
         {
             place(dst.index | (src.base.index << 5) | ((src.data >> sizelog) << 10) | (opsize << 22) | (1 << 24));
         }

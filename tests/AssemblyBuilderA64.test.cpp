@@ -1,6 +1,7 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/AssemblyBuilderA64.h"
 #include "Luau/StringUtils.h"
+#include "../CodeGen/src/EmitCommonA64.h"
 #include "ScopedFlags.h"
 
 #include "doctest.h"
@@ -111,6 +112,37 @@ TEST_CASE_FIXTURE(AssemblyBuilderA64Fixture, "Binary")
     SINGLE_COMPARE(sub(w3, w7, uint16_t(78)), 0x510138E3);
     SINGLE_COMPARE(cmp(w0, uint16_t(42)), 0x7100A81F);
 }
+
+TEST_CASE_FIXTURE(AssemblyBuilderA64Fixture, "WideValueOffsets")
+{
+    SINGLE_COMPARE(add(x0, x1, uint16_t(6120)), 0x913ffc20, 0x911fa400);
+    SINGLE_COMPARE(sub(x0, x1, uint16_t(6120)), 0xd13ffc20, 0xd11fa400);
+    SINGLE_COMPARE(ldr(w0, mem(x1, 6136)), 0xb957f820);
+    SINGLE_COMPARE(str(w0, mem(x1, 6136)), 0xb917f820);
+    SINGLE_COMPARE(ldr(q0, mem(x1, 6128)), 0x3dc5fc20);
+}
+
+#if LUA_VECTOR_SIZE == 4 && !LUA_VECTOR_DOUBLE
+TEST_CASE("A64Float4PayloadTagOffsetBoundary")
+{
+    for (int index : {681, 682, 683})
+    {
+        CAPTURE(index);
+        AssemblyBuilderA64 build(nullptr, 0);
+        AddressA64 addr = valuePayloadAddress(build, mem(x1, index * sizeof(TValue)));
+        bool encoded = addr.base == x17;
+        CHECK(encoded);
+        if (encoded)
+        {
+            emitLoadTValue(build, q0, mem(x1, index * sizeof(TValue)));
+            emitStoreTValue(build, q0, mem(x2, index * sizeof(TValue)));
+            emitStoreTValue(build, q0, mem(sp, 80));
+            emitLoadTValue(build, q1, mem(sp, 80));
+        }
+        CHECK(build.finalize());
+    }
+}
+#endif
 
 TEST_CASE_FIXTURE(AssemblyBuilderA64Fixture, "BinaryExtended")
 {
