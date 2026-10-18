@@ -81,6 +81,7 @@ public:
     int32_t addConstantInteger(int64_t value);
     int32_t addConstantVectorf(float x, float y, float z, float w);
     int32_t addConstantVectord(double x, double y, double z, double w);
+    int32_t addConstantQuaternion(short x, short y, short z, short w);
     int32_t addConstantString(StringRef value);
     int32_t addImport(uint32_t iid);
     int32_t addConstantTable(const TableShape& shape);

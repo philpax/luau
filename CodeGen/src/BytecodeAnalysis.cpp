@@ -223,6 +223,8 @@ static uint8_t getBytecodeConstantTag(Proto* proto, unsigned ki)
         return LBC_TYPE_INTEGER;
     case LUA_TVECTOR:
         return LBC_TYPE_VECTOR;
+    case LUA_TQUATERNION:
+        return LBC_TYPE_QUATERNION;
     case LUA_TSTRING:
         return LBC_TYPE_STRING;
     case LUA_TTABLE:

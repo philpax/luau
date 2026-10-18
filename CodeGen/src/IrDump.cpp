@@ -625,6 +625,9 @@ uint8_t parseTagName(std::string_view name)
     if (name == "tvector")
         return LUA_TVECTOR;
 
+    if (name == "tquaternion")
+        return LUA_TQUATERNION;
+
     if (name == "tstring")
         return LUA_TSTRING;
 
@@ -886,6 +889,8 @@ const char* getBytecodeTypeName(uint8_t type, const char* const* userdataTypes)
         return "userdata";
     case LBC_TYPE_VECTOR:
         return "vector";
+    case LBC_TYPE_QUATERNION:
+        return "quaternion";
     case LBC_TYPE_BUFFER:
         return "buffer";
     case LBC_TYPE_CLASS:

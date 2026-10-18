@@ -140,6 +140,7 @@ enum class BcVmConstKind : uint8_t
     Number,
     Vectorf,
     Vectord,
+    Quaternion,
     String,
     Import,
     Table,
@@ -158,6 +159,7 @@ struct BcVmConst
         double valueNumber;
         float valueVectorf[4];
         double valueVectord[4];
+        short valueQuaternion[4];
         std::string_view valueString;
         uint32_t valueImport;
         uint32_t valueTable;
@@ -195,6 +197,10 @@ struct BcVmConst
         case BcVmConstKind::Vectord:
             return valueVectord[0] == rhs.valueVectord[0] && valueVectord[1] == rhs.valueVectord[1] && valueVectord[2] == rhs.valueVectord[2] &&
                    valueVectord[3] == rhs.valueVectord[3];
+
+        case BcVmConstKind::Quaternion:
+            return valueQuaternion[0] == rhs.valueQuaternion[0] && valueQuaternion[1] == rhs.valueQuaternion[1] &&
+                   valueQuaternion[2] == rhs.valueQuaternion[2] && valueQuaternion[3] == rhs.valueQuaternion[3];
 
         case BcVmConstKind::String:
             return valueString == rhs.valueString;

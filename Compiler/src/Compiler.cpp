@@ -1970,18 +1970,15 @@ struct Compiler
         return Compile::isConstantFalse(constants, node);
     }
 
-    bool isConstantVector(AstExpr* node)
+    bool isConstantCompareSupported(AstExpr* node)
     {
         const Constant* cv = constants.find(node);
 
-        return (cv != nullptr) && (cv->type == Constant::Type_Vectorf || cv->type == Constant::Type_Vectord);
-    }
+        if (!cv)
+            return false;
 
-    bool isConstantInteger(AstExpr* node)
-    {
-        const Constant* cv = constants.find(node);
-
-        return cv && cv->type == Constant::Type_Integer;
+        return cv->type == Constant::Type_Nil || cv->type == Constant::Type_Boolean || cv->type == Constant::Type_Number ||
+               cv->type == Constant::Type_String;
     }
 
     Constant getConstant(AstExpr* node)
@@ -2007,8 +2004,8 @@ struct Compiler
                 std::swap(left, right);
         }
 
-        // disable fast path for vectors and integers because supporting it would require a new opcode
-        if (operandIsConstant && (isConstantVector(right) || (FFlag::LuauIntegerType2 && isConstantInteger(right))))
+        // Constant comparisons only have specialized opcodes for nil, booleans, numbers, and strings.
+        if (operandIsConstant && !isConstantCompareSupported(right))
             operandIsConstant = false;
 
         uint8_t rl = compileExprAuto(left, rs);
@@ -2130,6 +2127,10 @@ struct Compiler
 
         case Constant::Type_Vectord:
             cid = bytecode.addConstantVectord(c->valueVectord[0], c->valueVectord[1], c->valueVectord[2], c->valueVectord[3]);
+            break;
+
+        case Constant::Type_Quaternion:
+            cid = bytecode.addConstantQuaternion(c->valueQuaternion[0], c->valueQuaternion[1], c->valueQuaternion[2], c->valueQuaternion[3]);
             break;
 
         case Constant::Type_String:
@@ -3181,6 +3182,18 @@ struct Compiler
         case Constant::Type_Vectord:
         {
             int32_t cid = bytecode.addConstantVectord(cv->valueVectord[0], cv->valueVectord[1], cv->valueVectord[2], cv->valueVectord[3]);
+            if (cid < 0)
+                CompileError::raise(node->location, "Exceeded constant limit; simplify the code to compile");
+
+            emitLoadK(target, cid);
+        }
+        break;
+
+        case Constant::Type_Quaternion:
+        {
+            int32_t cid = bytecode.addConstantQuaternion(
+                cv->valueQuaternion[0], cv->valueQuaternion[1], cv->valueQuaternion[2], cv->valueQuaternion[3]
+            );
             if (cid < 0)
                 CompileError::raise(node->location, "Exceeded constant limit; simplify the code to compile");
 

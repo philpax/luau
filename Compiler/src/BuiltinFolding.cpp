@@ -64,11 +64,34 @@ static Constant cvectord(double x, double y, double z, double w)
 
 static Constant cquaternion(double x, double y, double z, double w)
 {
+    // Leave non-finite inputs and overflowing float arithmetic to the runtime.
+    double max = std::numeric_limits<float>::max();
+    if (!(fabs(x) <= max && fabs(y) <= max && fabs(z) <= max && fabs(w) <= max))
+        return cvar();
+
+    float xf = float(x);
+    float yf = float(y);
+    float zf = float(z);
+    float wf = float(w);
+    float length2 = xf * xf + yf * yf + zf * zf + wf * wf;
+    if (!isfinite(length2))
+        return cvar();
+
     Constant res = {Constant::Type_Quaternion};
-    res.valueQuaternion[0] = (short)(x * 32767.0);
-    res.valueQuaternion[1] = (short)(y * 32767.0);
-    res.valueQuaternion[2] = (short)(z * 32767.0);
-    res.valueQuaternion[3] = (short)(w * 32767.0);
+    if (length2 < 1e-10f)
+    {
+        res.valueQuaternion[0] = 0;
+        res.valueQuaternion[1] = 0;
+        res.valueQuaternion[2] = 0;
+        res.valueQuaternion[3] = 32767;
+        return res;
+    }
+
+    float length = sqrtf(length2);
+    res.valueQuaternion[0] = (short)((xf / length) * 32767.f);
+    res.valueQuaternion[1] = (short)((yf / length) * 32767.f);
+    res.valueQuaternion[2] = (short)((zf / length) * 32767.f);
+    res.valueQuaternion[3] = (short)((wf / length) * 32767.f);
     return res;
 }
 
@@ -110,6 +133,9 @@ static Constant ctype(const Constant& c)
     case Constant::Type_Vectord:
         return cstring("vector");
 
+    case Constant::Type_Quaternion:
+        return cstring("quaternion");
+
     case Constant::Type_String:
         return cstring("string");
 
@@ -139,7 +165,8 @@ static Constant ctypeof(const Constant& c)
 
     case Constant::Type_Vectorf:
     case Constant::Type_Vectord:
-        return cvar(); // vector can have a custom typeof name at runtime
+    case Constant::Type_Quaternion:
+        return cvar(); // vector and quaternion can have a custom typeof name at runtime.
 
     case Constant::Type_String:
         return cstring("string");

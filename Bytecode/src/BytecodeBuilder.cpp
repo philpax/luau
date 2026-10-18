@@ -405,6 +405,21 @@ int32_t BytecodeBuilder::addConstantVectord(double x, double y, double z, double
     return addConstant(k, c);
 }
 
+int32_t BytecodeBuilder::addConstantQuaternion(short x, short y, short z, short w)
+{
+    Constant c = {Constant::Type_Quaternion};
+    c.valueQuaternion[0] = x;
+    c.valueQuaternion[1] = y;
+    c.valueQuaternion[2] = z;
+    c.valueQuaternion[3] = w;
+
+    ConstantKey k = {Constant::Type_Quaternion};
+    static_assert(sizeof(k.value) == sizeof(c.valueQuaternion), "Expecting quaternion to have four 16-bit components");
+    memcpy(&k.value, c.valueQuaternion, sizeof(c.valueQuaternion));
+
+    return addConstant(k, c);
+}
+
 int32_t BytecodeBuilder::addConstantString(StringRef value)
 {
     unsigned int index = addStringTableEntry(value);

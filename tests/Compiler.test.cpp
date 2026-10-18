@@ -1,6 +1,9 @@
 // This file is part of the Luau programming language and is licensed under MIT License; see LICENSE.txt for details
 #include "Luau/Compiler.h"
 #include "Luau/BytecodeBuilder.h"
+#include "Luau/BytecodeDump.h"
+#include "Luau/BytecodeGraph.h"
+#include "Luau/BytecodeWire.h"
 #include "Luau/StringUtils.h"
 
 #include "ScopedFlags.h"
@@ -6161,6 +6164,158 @@ RETURN R0 1
     CHECK_EQ("\n" + compileFunction("return Vector3.new(1, 2, 3)", 0, 2, 0), R"(
 LOADK R0 K0 [1, 2, 3]
 RETURN R0 1
+)");
+}
+
+TEST_CASE("QuaternionConstants")
+{
+    CHECK_EQ("\n" + compileFunction("return quaternion.pack(0, 0, 0, 1)", 0, 2), R"(
+LOADK R0 K0 [0, 0, 0, 1]
+RETURN R0 1
+)");
+
+    CHECK_EQ("\n" + compileFunction("return quaternion.pack(0.5, -0.5, 0.5, -0.5)", 0, 2), R"(
+LOADK R0 K0 [0.499984741, -0.499984741, 0.499984741, -0.499984741]
+RETURN R0 1
+)");
+
+    CHECK_EQ("\n" + compileFunction(R"(
+local q = quaternion.pack(1, 0, 0, 0)
+return q, quaternion.pack(0, 1, 0, 0), quaternion.pack(0, 0, 1, 0), quaternion.pack(0, 0, 0, 1), q
+)", 0, 2), R"(
+LOADK R0 K0 [1, 0, 0, 0]
+LOADK R1 K1 [0, 1, 0, 0]
+LOADK R2 K2 [0, 0, 1, 0]
+LOADK R3 K3 [0, 0, 0, 1]
+LOADK R4 K0 [1, 0, 0, 0]
+RETURN R0 5
+)");
+}
+
+TEST_CASE("QuaternionConstantNormalization")
+{
+    CHECK_EQ("\n" + compileFunction("return quaternion.pack(1, -2, 3, -4)", 0, 2), R"(
+LOADK R0 K0 [0.182561725, -0.365123451, 0.547715664, -0.730277419]
+RETURN R0 1
+)");
+
+    CHECK_EQ("\n" + compileFunction("return quaternion.pack(2, -2, 2, -2)", 0, 2), R"(
+LOADK R0 K0 [0.499984741, -0.499984741, 0.499984741, -0.499984741]
+RETURN R0 1
+)");
+
+    CHECK_EQ("\n" + compileFunction("return quaternion.pack(0, 0, 0, 0), quaternion.pack(1e-6, 0, 0, 0)", 0, 2), R"(
+LOADK R0 K0 [0, 0, 0, 1]
+LOADK R1 K0 [0, 0, 0, 1]
+RETURN R0 2
+)");
+
+    CHECK_EQ("\n" + compileFunction("return quaternion.pack(2e-5, 0, 0, 0)", 0, 2), R"(
+LOADK R0 K0 [1, 0, 0, 0]
+RETURN R0 1
+)");
+
+    for (const char* source : {"return quaternion.pack(0/0, 0, 0, 1)", "return quaternion.pack(math.huge, 0, 0, 1)",
+             "return quaternion.pack(1e30, 0, 0, 1)", "return quaternion.pack(1e300, 0, 0, 1)"})
+    {
+        CHECK(compileFunction(source, 0, 2).find("[quaternion.pack]") != std::string::npos);
+    }
+}
+
+TEST_CASE("QuaternionConstantTypes")
+{
+    CHECK_EQ("\n" + compileFunction("return type(quaternion.pack(0, 0, 0, 1))", 0, 2), R"(
+LOADK R0 K0 ['quaternion']
+RETURN R0 1
+)");
+
+    CHECK(compileFunction("return typeof(quaternion.pack(0, 0, 0, 1))", 0, 2).find("[typeof]") != std::string::npos);
+}
+
+TEST_CASE("QuaternionConstantEquality")
+{
+    CHECK_EQ("\n" + compileFunction(R"(
+local q = quaternion.pack(0, 0, 0, 1)
+return q == quaternion.pack(0, 0, 0, 2), q ~= quaternion.pack(0, 0, 1, 0), q == 1, q == vector.create(0, 0, 0)
+)", 0, 2), R"(
+LOADB R0 1
+LOADB R1 1
+LOADB R2 0
+LOADB R3 0
+RETURN R0 4
+)");
+}
+
+TEST_CASE("QuaternionConstantRuntimeEquality")
+{
+    for (const char* source : {
+             "local q = ... return q == quaternion.pack(0, 0, 0, 1)",
+             "local q = ... return q ~= quaternion.pack(0, 0, 0, 1)",
+             "local q = ... return quaternion.pack(0, 0, 0, 1) == q",
+             "local q = ... return quaternion.pack(0, 0, 0, 1) ~= q",
+             "local q = ... if q == quaternion.pack(0, 0, 0, 1) then return 1 else return 2 end",
+             "local q = ... if quaternion.pack(0, 0, 0, 1) ~= q then return 1 else return 2 end",
+         })
+    {
+        std::string dump = compileFunction(source, 0, 2);
+        CHECK(dump.find("[0, 0, 0, 1]") != std::string::npos);
+        CHECK((dump.find("JUMPIFEQ") != std::string::npos || dump.find("JUMPIFNOTEQ") != std::string::npos));
+        CHECK(dump.find("JUMPXEQK") == std::string::npos);
+    }
+}
+
+TEST_CASE("QuaternionConstantBytecodeGraph")
+{
+    BytecodeBuilder bcb;
+    bcb.setDumpFlags(BytecodeBuilder::Dump_Code);
+    CompileOptions options;
+    options.optimizationLevel = 2;
+    compileOrThrow(bcb, R"(
+return quaternion.pack(1, -2, 3, -4), quaternion.pack(0, 0, 0, 1), vector.create(1, 2, 3), "text", 1
+)", options);
+
+    const std::string& bytecode = bcb.getBytecode();
+    size_t offset = 2;
+    uint32_t stringCount = readVarInt(bytecode.data(), offset);
+    std::vector<std::string_view> strings;
+    for (uint32_t i = 0; i < stringCount; ++i)
+    {
+        uint32_t length = readVarInt(bytecode.data(), offset);
+        strings.emplace_back(bytecode.data() + offset, length);
+        offset += length;
+    }
+
+    auto function = Bytecode::fromFunctionBytecode(bcb.getFunctionData(0), strings);
+    REQUIRE(function);
+    REQUIRE_EQ(function->constants.size(), 4);
+
+    std::string constantDump;
+    Bytecode::ToStringContext context{constantDump};
+    Bytecode::toString(context, *function, function->constants[0], false);
+    CHECK_EQ(constantDump, "0.182561725, -0.365123451, 0.547715664, -0.730277419");
+    Bytecode::BcVmConst expected;
+    expected.kind = Bytecode::BcVmConstKind::Quaternion;
+    expected.valueQuaternion[0] = 5982;
+    expected.valueQuaternion[1] = -11964;
+    expected.valueQuaternion[2] = 17947;
+    expected.valueQuaternion[3] = -23929;
+    CHECK(function->constants[0] == expected);
+    CHECK(function->constants[0] != function->constants[1]);
+    CHECK(function->constants[0] != function->constants[2]);
+
+    BytecodeBuilder reserializer;
+    reserializer.setDumpFlags(BytecodeBuilder::Dump_Code);
+    Bytecode::toFunctionBytecode(reserializer, *function);
+    CHECK_EQ(reserializer.dumpFunction(0), bcb.dumpFunction(0));
+    CHECK_EQ(reserializer.getFunctionData(0), bcb.getFunctionData(0));
+}
+
+TEST_CASE("QuaternionConstantOperand")
+{
+    CHECK_EQ("\n" + compileFunction("local a = ... return a and quaternion.pack(0, 0, 0, 1)", 0, 2), R"(
+GETVARARGS R0 1
+ANDK R1 R0 K0 [0, 0, 0, 1]
+RETURN R1 1
 )");
 }
 

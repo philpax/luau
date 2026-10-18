@@ -1965,6 +1965,8 @@ std::optional<uint8_t> tryGetLuauTagForBcType(uint8_t bcType, bool ignoreOptiona
         return LUA_TUSERDATA;
     case LBC_TYPE_VECTOR:
         return LUA_TVECTOR;
+    case LBC_TYPE_QUATERNION:
+        return LUA_TQUATERNION;
     case LBC_TYPE_BUFFER:
         return LUA_TBUFFER;
     case LBC_TYPE_CLASS:

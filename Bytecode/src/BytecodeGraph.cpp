@@ -110,6 +110,14 @@ std::optional<CompTimeBcFunction> fromFunctionBytecode(std::string bytecode, std
             break;
         }
 
+        case LBC_CONSTANT_QUATERNION:
+        {
+            fn.constants[i].kind = BcVmConstKind::Quaternion;
+            for (unsigned int j = 0; j < 4; ++j)
+                fn.constants[i].valueQuaternion[j] = (short)(read<float>(data, offset) * 32767.f);
+            break;
+        }
+
         case LBC_CONSTANT_STRING:
         {
             fn.constants[i].kind = BcVmConstKind::String;
@@ -377,6 +385,10 @@ std::string toFunctionBytecode(BytecodeBuilder& bcb, CompTimeBcFunction& fn)
 
         case BcVmConstKind::Vectord:
             consts.push_back(bcb.addConstantVectord(c.valueVectord[0], c.valueVectord[1], c.valueVectord[2], c.valueVectord[3]));
+            break;
+
+        case BcVmConstKind::Quaternion:
+            consts.push_back(bcb.addConstantQuaternion(c.valueQuaternion[0], c.valueQuaternion[1], c.valueQuaternion[2], c.valueQuaternion[3]));
             break;
 
         case BcVmConstKind::String:

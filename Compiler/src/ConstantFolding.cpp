@@ -44,6 +44,11 @@ static bool constantsEqual(const Constant& la, const Constant& ra)
         return ra.type == Constant::Type_Vectord && la.valueVectord[0] == ra.valueVectord[0] && la.valueVectord[1] == ra.valueVectord[1] &&
                la.valueVectord[2] == ra.valueVectord[2] && la.valueVectord[3] == ra.valueVectord[3];
 
+    case Constant::Type_Quaternion:
+        return ra.type == Constant::Type_Quaternion && la.valueQuaternion[0] == ra.valueQuaternion[0] &&
+               la.valueQuaternion[1] == ra.valueQuaternion[1] && la.valueQuaternion[2] == ra.valueQuaternion[2] &&
+               la.valueQuaternion[3] == ra.valueQuaternion[3];
+
     case Constant::Type_String:
         return ra.type == Constant::Type_String && la.stringLength == ra.stringLength && memcmp(la.valueString, ra.valueString, la.stringLength) == 0;
 

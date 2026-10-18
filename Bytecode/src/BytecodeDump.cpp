@@ -296,6 +296,15 @@ void toString(ToStringContext& ctx, BcFunction<BcVmConst>& function, const BcVmC
         else
             append(ctx.result, "%.17g, %.17g, %.17g, %.17g", data.valueVectord[0], data.valueVectord[1], data.valueVectord[2], data.valueVectord[3]);
         break;
+    case BcVmConstKind::Quaternion:
+    {
+        float x = std::max(data.valueQuaternion[0] / 32767.f, -1.f);
+        float y = std::max(data.valueQuaternion[1] / 32767.f, -1.f);
+        float z = std::max(data.valueQuaternion[2] / 32767.f, -1.f);
+        float w = std::max(data.valueQuaternion[3] / 32767.f, -1.f);
+        append(ctx.result, "%.9g, %.9g, %.9g, %.9g", x, y, z, w);
+        break;
+    }
     case BcVmConstKind::String:
         if (isPrintableStringConstant(data.valueString.data(), data.valueString.length()))
         {
