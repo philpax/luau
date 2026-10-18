@@ -21,6 +21,76 @@ namespace CodeGen
 namespace X64
 {
 
+void loadTValue(AssemblyBuilderX64& build, RegisterX64 dst, OperandX64 src, RegisterX64 scratch)
+{
+    CODEGEN_ASSERT(dst.size == SizeX64::xmmword);
+    CODEGEN_ASSERT(src.cat == CategoryX64::mem && src.memSize == SizeX64::xmmword);
+
+    build.vmovups(dst, src);
+#if LUA_VECTOR_SIZE == 4
+    CODEGEN_ASSERT(scratch.size == SizeX64::xmmword && scratch != dst);
+    src.memSize = SizeX64::dword;
+    src.imm += offsetof(TValue, tt);
+    build.vmovss(scratch, src);
+    build.vinsertf128(ymmReg(dst), ymmReg(dst), scratch, 1);
+#else
+    (void)scratch;
+#endif
+}
+
+void storeTValue(AssemblyBuilderX64& build, OperandX64 dst, RegisterX64 src, RegisterX64 scratch)
+{
+    CODEGEN_ASSERT(dst.cat == CategoryX64::mem && dst.memSize == SizeX64::xmmword);
+    CODEGEN_ASSERT(src.size == SizeX64::xmmword);
+
+    build.vmovups(dst, src);
+#if LUA_VECTOR_SIZE == 4
+    CODEGEN_ASSERT(scratch.size == SizeX64::xmmword && scratch != src);
+    dst.memSize = SizeX64::dword;
+    dst.imm += offsetof(TValue, tt);
+    build.vextractf128(scratch, ymmReg(src), 1);
+    build.vmovss(dst, scratch);
+#else
+    (void)scratch;
+#endif
+}
+
+void getTValueTag(AssemblyBuilderX64& build, RegisterX64 dst, RegisterX64 src, RegisterX64 scratch)
+{
+    CODEGEN_ASSERT(dst.size == SizeX64::dword);
+    CODEGEN_ASSERT(src.size == SizeX64::xmmword);
+#if LUA_VECTOR_SIZE == 4
+    CODEGEN_ASSERT(scratch.size == SizeX64::xmmword && scratch != src);
+    build.vextractf128(scratch, ymmReg(src), 1);
+    build.vpextrd(dst, scratch, 0);
+#else
+    (void)scratch;
+    build.vpextrd(dst, src, 3);
+#endif
+}
+
+void emitMultiplyTValueSize(AssemblyBuilderX64& build, RegisterX64 reg)
+{
+    CODEGEN_ASSERT(reg.size == SizeX64::dword || reg.size == SizeX64::qword);
+#if LUA_VECTOR_SIZE == 4
+    build.lea(reg, addr[reg + reg * 2]);
+    build.shl(reg, 3);
+#else
+    build.shl(reg, kTValueSizeLog2);
+#endif
+}
+
+void emitMultiplyLuaNodeSize(AssemblyBuilderX64& build, RegisterX64 reg)
+{
+    CODEGEN_ASSERT(reg.size == SizeX64::dword || reg.size == SizeX64::qword);
+#if LUA_VECTOR_SIZE == 4
+    build.lea(reg, addr[reg + reg * 2]);
+    build.shl(reg, 4);
+#else
+    build.shl(reg, kLuaNodeSizeLog2);
+#endif
+}
+
 void jumpOnNumberCmp(AssemblyBuilderX64& build, RegisterX64 tmp, OperandX64 lhs, OperandX64 rhs, IrCondition cond, Label& label, bool floatPrecision)
 {
     // Refresher on comi/ucomi EFLAGS:
@@ -143,7 +213,7 @@ void getTableNodeAtCachedSlot(AssemblyBuilderX64& build, RegisterX64 tmp, Regist
     build.and_(byteReg(tmp), byte[table + offsetof(LuaTable, nodemask8)]);
 
     // LuaNode* n = &h->node[slot];
-    build.shl(dwordReg(tmp), kLuaNodeSizeLog2);
+    emitMultiplyLuaNodeSize(build, dwordReg(tmp));
     build.add(node, tmp);
 }
 
@@ -240,7 +310,9 @@ void callSetTable(IrRegAllocX64& regs, AssemblyBuilderX64& build, int rb, Operan
     emitUpdateBase(build);
 }
 
-void checkObjectBarrierConditions(AssemblyBuilderX64& build, RegisterX64 tmp, RegisterX64 object, RegisterX64 ra, IrOp raOp, int ratag, Label& skip)
+void checkObjectBarrierConditions(
+    IrRegAllocX64& regs, AssemblyBuilderX64& build, RegisterX64 tmp, RegisterX64 object, RegisterX64 ra, IrOp raOp, int ratag, Label& skip
+)
 {
     // Barrier should've been optimized away if we know that it's not collectable, checking for correctness
     if (ratag == -1 || !isGCO(ratag))
@@ -248,7 +320,13 @@ void checkObjectBarrierConditions(AssemblyBuilderX64& build, RegisterX64 tmp, Re
         // iscollectable(ra)
         if (raOp.kind == IrOpKind::Inst)
         {
-            build.vpextrd(dwordReg(tmp), ra, 3);
+#if LUA_VECTOR_SIZE == 4
+            ScopedRegX64 scratch{regs, SizeX64::xmmword};
+            getTValueTag(build, dwordReg(tmp), ra, scratch.reg);
+#else
+            (void)regs;
+            getTValueTag(build, dwordReg(tmp), ra, noreg);
+#endif
             build.cmp(dwordReg(tmp), LUA_TSTRING);
         }
         else
@@ -283,7 +361,7 @@ void callBarrierObject(IrRegAllocX64& regs, AssemblyBuilderX64& build, RegisterX
     Label skip;
 
     ScopedRegX64 tmp{regs, SizeX64::qword};
-    checkObjectBarrierConditions(build, tmp.reg, object, ra, raOp, ratag, skip);
+    checkObjectBarrierConditions(regs, build, tmp.reg, object, ra, raOp, ratag, skip);
 
     {
         ScopedSpills spillGuard(regs);

@@ -1633,6 +1633,7 @@ bb_bytecode_1:
 TEST_CASE_FIXTURE(LoweringFixture, "VectorLibraryChain")
 {
     ensureVectorFloat();
+    ensureVectorSize3();
 
     CHECK_EQ(
         "\n" + getCodegenAssembly(R"(

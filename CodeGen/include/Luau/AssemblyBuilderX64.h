@@ -193,6 +193,8 @@ public:
     void vpshufps(RegisterX64 dst, RegisterX64 src1, OperandX64 src2, uint8_t shuffle);
     void vpinsrd(RegisterX64 dst, RegisterX64 src1, OperandX64 src2, uint8_t offset);
     void vpextrd(RegisterX64 dst, RegisterX64 src, uint8_t offset);
+    void vinsertf128(RegisterX64 dst, RegisterX64 src1, OperandX64 src2, uint8_t lane);
+    void vextractf128(OperandX64 dst, RegisterX64 src, uint8_t lane);
 
     void vdpps(OperandX64 dst, OperandX64 src1, OperandX64 src2, uint8_t mask);
     void vfmadd213ps(OperandX64 dst, OperandX64 src1, OperandX64 src2);

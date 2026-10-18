@@ -21,7 +21,7 @@ namespace CodeGen
 namespace X64
 {
 
-static constexpr unsigned kValueDwordSize[] = {0, 0, 1, 1, 2, 2, 1, 2, 4};
+static constexpr unsigned kValueDwordSize[] = {0, 0, 1, 1, 2, 2, 1, 2, LUA_VECTOR_SIZE == 4 ? 8u : 4u};
 static_assert(sizeof(kValueDwordSize) / sizeof(kValueDwordSize[0]) == size_t(IrValueKind::Count), "all kinds have to be covered");
 
 static const RegisterX64 kGprAllocOrder[] = {rax, rdx, rcx, rbx, rsi, rdi, r8, r9, r10, r11};
@@ -404,7 +404,13 @@ void IrRegAllocX64::preserve(IrInst& inst)
         unsigned i = findSpillStackSlot(spill.valueKind);
 
         if (spill.valueKind == IrValueKind::Tvalue)
+        {
+#if LUA_VECTOR_SIZE == 4
+            build.vmovups(ymmword[sSpillArea + i * 4], ymmReg(inst.regX64));
+#else
             build.vmovups(xmmword[sSpillArea + i * 4], inst.regX64);
+#endif
+        }
         else if (spill.valueKind == IrValueKind::Double)
             build.vmovsd(qword[sSpillArea + i * 4], inst.regX64);
         else if (spill.valueKind == IrValueKind::Pointer || spill.valueKind == IrValueKind::Int64)
@@ -454,7 +460,14 @@ void IrRegAllocX64::preserve(IrInst& inst)
             int storeReg = vmRegOp(loc.op);
 
             if (spill.valueKind == IrValueKind::Tvalue)
+            {
                 build.vmovups(luauReg(storeReg), inst.regX64);
+#if LUA_VECTOR_SIZE == 4
+                // The register is released below, so its payload can be overwritten while extracting the tag.
+                build.vextractf128(inst.regX64, ymmReg(inst.regX64), 1);
+                build.vmovss(luauRegTag(storeReg), inst.regX64);
+#endif
+            }
             else if (spill.valueKind == IrValueKind::Double)
                 build.vmovsd(luauRegValue(storeReg), inst.regX64);
             else if (spill.valueKind == IrValueKind::Pointer || spill.valueKind == IrValueKind::Int64)
@@ -545,7 +558,24 @@ void IrRegAllocX64::restore(IrInst& inst, bool intoOriginalLocation)
 
             if (spill.valueKind == IrValueKind::Tvalue)
             {
+#if LUA_VECTOR_SIZE == 4
+                if (spill.stackSlot != kNoStackSlot)
+                {
+                    restoreAddr.memSize = SizeX64::ymmword;
+                    build.vmovups(ymmReg(reg), restoreAddr);
+                }
+                else
+                {
+                    OperandX64 tagAddr = restoreAddr;
+                    tagAddr.memSize = SizeX64::dword;
+                    tagAddr.imm += offsetof(TValue, tt);
+                    build.vmovss(reg, tagAddr);
+                    build.vinsertf128(ymmReg(reg), ymmReg(reg), reg, 1);
+                    build.vinsertf128(ymmReg(reg), ymmReg(reg), restoreAddr, 0);
+                }
+#else
                 build.vmovups(reg, restoreAddr);
+#endif
             }
             else if (spill.valueKind == IrValueKind::Double)
             {
@@ -651,23 +681,23 @@ unsigned IrRegAllocX64::findSpillStackSlot(IrValueKind valueKind)
     }
     else
     {
-        // Find a free stack slot. Four consecutive slots might be required for 16 byte TValues, so '- 3' is used
-        // For 8 and 16 byte types we search in steps of 2 to return slot indices aligned by 2
-        for (unsigned i = 0; i < unsigned(usedSpillSlotHalfs.size() - 3); i += 2)
-        {
-            if (usedSpillSlotHalfs.test(i) || usedSpillSlotHalfs.test(i + 1))
-                continue;
+        unsigned size = kValueDwordSize[int(valueKind)];
 
-            if (valueKind == IrValueKind::Tvalue)
+        // Align native stack slots to 8 bytes; unaligned SIMD moves handle the wider TValue representation.
+        for (unsigned i = 0; i + size <= unsigned(usedSpillSlotHalfs.size()); i += 2)
+        {
+            bool available = true;
+            for (unsigned pos = i; pos < i + size; pos++)
             {
-                if (usedSpillSlotHalfs.test(i + 2) || usedSpillSlotHalfs.test(i + 3))
+                if (usedSpillSlotHalfs.test(pos))
                 {
-                    i += 2; // No need to retest this double position
-                    continue;
+                    available = false;
+                    break;
                 }
             }
 
-            return i;
+            if (available)
+                return i;
         }
     }
 

@@ -1833,6 +1833,14 @@ void translateInstGetTableKS(IrBuilder& build, const Instruction* pc, int pcpos)
             build.inst(IrCmd::STORE_DOUBLE, build.vmReg(ra), value);
             build.inst(IrCmd::STORE_TAG, build.vmReg(ra), build.constTag(LUA_TNUMBER));
         }
+        else if (LUA_VECTOR_SIZE == 4 && LUA_VECTOR_DOUBLE == 0 && str->len == 1 && (*field == 'W' || *field == 'w'))
+        {
+            value = build.inst(IrCmd::LOAD_FLOAT, build.vmReg(rb), build.constInt(12));
+            value = build.inst(IrCmd::FLOAT_TO_NUM, value);
+
+            build.inst(IrCmd::STORE_DOUBLE, build.vmReg(ra), value);
+            build.inst(IrCmd::STORE_TAG, build.vmReg(ra), build.constTag(LUA_TNUMBER));
+        }
         else
         {
             if (build.hostHooks.vectorAccess && build.hostHooks.vectorAccess(build, field, str->len, ra, rb, pcpos))

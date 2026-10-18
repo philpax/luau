@@ -452,7 +452,7 @@ local function vec3neg(a: vector) return -a end
 assert(vec3add(vector.create(10, 20, 40), vector.create(1, 0, 2)) == vector.create(11, 20, 42))
 assert(vec3sub(vector.create(10, 20, 40), vector.create(1, 0, 2)) == vector.create(9, 20, 38))
 assert(vec3mul(vector.create(10, 20, 40), vector.create(1, 0, 2)) == vector.create(10, 0, 80))
-assert(vec3div(vector.create(10, 20, 40), vector.create(1, 0, 2)) == vector.create(10, math.huge, 20))
+assert(vec3div(vector.create(10, 20, 40, 8), vector.create(1, 0, 2, 4)) == vector.create(10, math.huge, 20, 2))
 assert(vec3neg(vector.create(10, 20, 40)) == vector.create(-10, -20, -40))
 
 local function vec3mulnum(a: vector, b: number) return a * b end

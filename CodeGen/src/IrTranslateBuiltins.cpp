@@ -819,7 +819,9 @@ static BuiltinImplResult translateBuiltinVector(IrBuilder& build, int nparams, i
     if (nparams < 2 || nresults > 1)
         return {BuiltinImplType::None, -1};
 
-    CODEGEN_ASSERT(LUA_VECTOR_SIZE == 3);
+    // The fourth constructor argument uses the VM fastcall until STORE_VECTOR represents four inputs.
+    if (LUA_VECTOR_SIZE == 4 && nparams > 3)
+        return {BuiltinImplType::None, -1};
 
     if (nparams == 2)
     {
@@ -1297,6 +1299,9 @@ static BuiltinImplResult translateBuiltinVectorMap1(
     int pcpos
 )
 {
+    if (LUA_VECTOR_SIZE == 4)
+        return {BuiltinImplType::None, -1};
+
     IrOp arg1 = build.vmReg(arg);
 
     if (nparams != 1 || nresults > 1 || arg1.kind == IrOpKind::Constant)
@@ -1347,6 +1352,9 @@ static BuiltinImplResult translateBuiltinVectorClamp(
     int pcpos
 )
 {
+    if (LUA_VECTOR_SIZE == 4)
+        return {BuiltinImplType::None, -1};
+
     IrOp arg1 = build.vmReg(arg);
 
     if (nparams != 3 || nresults > 1 || arg1.kind == IrOpKind::Constant || args.kind == IrOpKind::Constant || arg3.kind == IrOpKind::Constant)

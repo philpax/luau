@@ -956,10 +956,10 @@ void analyzeBytecodeTypes(IrFunction& function, const HostIrHooks& hostHooks)
                 {
                     if (str->len == 1)
                     {
-                        // Same handling as LOP_GETTABLEKS block in lvmexecute.cpp - case-insensitive comparison with "X" / "Y" / "Z"
+                        // Match the case-insensitive component access in lvmexecute.cpp.
                         char ch = field[0] | ' ';
 
-                        if (ch == 'x' || ch == 'y' || ch == 'z')
+                        if (ch == 'x' || ch == 'y' || ch == 'z' || (LUA_VECTOR_SIZE == 4 && ch == 'w'))
                             regTags[ra] = LBC_TYPE_NUMBER;
                     }
 

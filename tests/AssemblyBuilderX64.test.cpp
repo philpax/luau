@@ -2,6 +2,8 @@
 #include "Luau/AssemblyBuilderX64.h"
 #include "Luau/StringUtils.h"
 
+#include "../CodeGen/src/EmitCommonX64.h"
+
 #include "doctest.h"
 #include "ScopedFlags.h"
 
@@ -570,6 +572,39 @@ TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "AVXMoveInstructionForms")
     SINGLE_COMPARE(vmovq(xmm1, qword[r9]), 0xc4, 0xc1, 0xf9, 0x6e, 0x09);
     SINGLE_COMPARE(vmovq(qword[r9], xmm1), 0xc4, 0xc1, 0xf9, 0x7e, 0x09);
 }
+
+TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "AVXWideValueInstructionForms")
+{
+    SINGLE_COMPARE(vinsertf128(ymm1, ymm2, xmm3, 1), 0xc4, 0xe3, 0x6d, 0x18, 0xcb, 0x01);
+    SINGLE_COMPARE(vinsertf128(ymm9, ymm10, xmmword[r13 + 16], 1), 0xc4, 0x43, 0x2d, 0x18, 0x4d, 0x10, 0x01);
+    SINGLE_COMPARE(vextractf128(xmm3, ymm1, 1), 0xc4, 0xe3, 0x7d, 0x19, 0xcb, 0x01);
+    SINGLE_COMPARE(vextractf128(xmmword[r13 + 16], ymm9, 1), 0xc4, 0x43, 0x7d, 0x19, 0x4d, 0x10, 0x01);
+}
+
+#if LUA_VECTOR_SIZE == 4
+TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "TValueTransferUsesExactPayloadAndTagWidths")
+{
+    // VM slots are 24 bytes, but only the payload and tag belong to the native value.
+    CHECK(check(
+        [](AssemblyBuilderX64& build)
+        {
+            loadTValue(build, xmm1, xmmword[rdi], xmm2);
+            storeTValue(build, xmmword[rsi], xmm1, xmm2);
+            getTValueTag(build, eax, xmm1, xmm2);
+        },
+        {
+            0xc4, 0xe1, 0x78, 0x10, 0x0f,             // vmovups xmm1, [rdi].
+            0xc4, 0xe1, 0x7a, 0x10, 0x57, 0x10,       // vmovss xmm2, [rdi+16].
+            0xc4, 0xe3, 0x75, 0x18, 0xca, 0x01,       // vinsertf128 ymm1, ymm1, xmm2, 1.
+            0xc4, 0xe1, 0x78, 0x11, 0x0e,             // vmovups [rsi], xmm1.
+            0xc4, 0xe3, 0x7d, 0x19, 0xca, 0x01,       // vextractf128 xmm2, ymm1, 1.
+            0xc4, 0xe1, 0x7a, 0x11, 0x56, 0x10,       // vmovss [rsi+16], xmm2.
+            0xc4, 0xe3, 0x7d, 0x19, 0xca, 0x01,       // vextractf128 xmm2, ymm1, 1.
+            0xc4, 0xe3, 0x79, 0x16, 0xd0, 0x00,       // vpextrd eax, xmm2, 0.
+        }
+    ));
+}
+#endif
 
 TEST_CASE_FIXTURE(AssemblyBuilderX64Fixture, "AVXConversionInstructionForms")
 {

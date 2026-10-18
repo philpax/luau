@@ -42,7 +42,8 @@ inline constexpr RegisterX64 rNativeContext = r13; // NativeContext* context
 inline constexpr RegisterX64 rConstants = r12;     // TValue* k
 
 inline constexpr unsigned kExtraLocals = 3; // Number of 8 byte slots available for specialized local variables specified below
-inline constexpr unsigned kSpillSlots = 23; // Number of 8 byte slots available for register allocator to spill data into
+// Four-wide native values need twice the SIMD spill storage.
+inline constexpr unsigned kSpillSlots = LUA_VECTOR_SIZE == 4 ? 47 : 23; // Number of 8 byte spill slots.
 static_assert((kExtraLocals + kSpillSlots) * 8 % 16 == 0, "locals have to preserve 16 byte alignment");
 
 inline constexpr uint8_t kWindowsFirstNonVolXmmReg = 6;
@@ -90,6 +91,19 @@ inline constexpr OperandX64 sCode = qword[rsp + kStackOffsetToLocals + 8];    //
 inline constexpr OperandX64 sTemporarySlot = addr[rsp + kStackOffsetToLocals + 16];
 
 inline constexpr OperandX64 sSpillArea = addr[rsp + kStackOffsetToSpillSlots];
+
+inline constexpr RegisterX64 ymmReg(RegisterX64 reg)
+{
+    return RegisterX64{SizeX64::ymmword, reg.index};
+}
+
+// Four-wide TValues use the low 128 bits for the payload and the low dword of the upper 128 bits for the tag.
+// VM memory transfers access only the 16-byte payload and 4-byte tag. Scratch must be a separate XMM register; three-wide builds ignore it.
+void loadTValue(AssemblyBuilderX64& build, RegisterX64 dst, OperandX64 src, RegisterX64 scratch);
+void storeTValue(AssemblyBuilderX64& build, OperandX64 dst, RegisterX64 src, RegisterX64 scratch);
+void getTValueTag(AssemblyBuilderX64& build, RegisterX64 dst, RegisterX64 src, RegisterX64 scratch);
+void emitMultiplyTValueSize(AssemblyBuilderX64& build, RegisterX64 reg);
+void emitMultiplyLuaNodeSize(AssemblyBuilderX64& build, RegisterX64 reg);
 
 inline OperandX64 luauReg(int ri)
 {
@@ -162,12 +176,10 @@ inline OperandX64 luauNodeKeyTag(RegisterX64 node)
     return dword[node + offsetof(LuaNode, key) + kOffsetOfTKeyTagNext];
 }
 
-inline void setLuauReg(AssemblyBuilderX64& build, RegisterX64 tmp, int ri, OperandX64 op)
+inline void setLuauReg(AssemblyBuilderX64& build, RegisterX64 tmp, int ri, OperandX64 op, RegisterX64 scratch)
 {
-    CODEGEN_ASSERT(op.cat == CategoryX64::mem);
-
-    build.vmovups(tmp, op);
-    build.vmovups(luauReg(ri), tmp);
+    loadTValue(build, tmp, op, scratch);
+    storeTValue(build, luauReg(ri), tmp, scratch);
 }
 
 inline void jumpIfTagIs(AssemblyBuilderX64& build, int ri, lua_Type tag, Label& label)
@@ -213,7 +225,9 @@ void callArithHelper(IrRegAllocX64& regs, AssemblyBuilderX64& build, int ra, Ope
 void callLengthHelper(IrRegAllocX64& regs, AssemblyBuilderX64& build, int ra, int rb);
 void callGetTable(IrRegAllocX64& regs, AssemblyBuilderX64& build, int rb, OperandX64 c, int ra);
 void callSetTable(IrRegAllocX64& regs, AssemblyBuilderX64& build, int rb, OperandX64 c, int ra);
-void checkObjectBarrierConditions(AssemblyBuilderX64& build, RegisterX64 tmp, RegisterX64 object, RegisterX64 ra, IrOp raOp, int ratag, Label& skip);
+void checkObjectBarrierConditions(
+    IrRegAllocX64& regs, AssemblyBuilderX64& build, RegisterX64 tmp, RegisterX64 object, RegisterX64 ra, IrOp raOp, int ratag, Label& skip
+);
 void checkObjectBarrierConditions_DEPRECATED(AssemblyBuilderX64& build, RegisterX64 tmp, RegisterX64 object, IrOp ra, int ratag, Label& skip);
 void callBarrierObject(IrRegAllocX64& regs, AssemblyBuilderX64& build, RegisterX64 object, IrOp objectOp, RegisterX64 ra, IrOp raOp, int ratag);
 void callBarrierObject_DEPRECATED(IrRegAllocX64& regs, AssemblyBuilderX64& build, RegisterX64 object, IrOp objectOp, IrOp ra, int ratag);

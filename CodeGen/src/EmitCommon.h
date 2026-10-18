@@ -3,6 +3,8 @@
 
 #include "Luau/Label.h"
 
+#include "lobject.h"
+
 namespace Luau
 {
 namespace CodeGen
@@ -12,7 +14,7 @@ constexpr unsigned kTValueSizeLog2 = 4;
 constexpr unsigned kLuaNodeSizeLog2 = 5;
 
 // TKey.tt and TKey.next are packed together in a bitfield
-constexpr unsigned kOffsetOfTKeyTagNext = 12; // offsetof cannot be used on a bit field
+constexpr unsigned kOffsetOfTKeyTagNext = offsetof(TValue, tt); // offsetof cannot be used on a bit field.
 constexpr unsigned kTKeyTagBits = 4;
 constexpr unsigned kTKeyTagMask = (1 << kTKeyTagBits) - 1;
 

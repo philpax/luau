@@ -692,6 +692,8 @@ struct ConstPropState
                 argOp = OP_C(store);
             else if (offset == 8)
                 argOp = OP_D(store);
+            else if (LUA_VECTOR_SIZE == 4 && offset == 12)
+                return build.constDouble(0.0);
 
             if (IrInst* arg = function.asInstOp(argOp))
             {

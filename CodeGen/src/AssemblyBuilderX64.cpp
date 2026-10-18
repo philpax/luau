@@ -1075,6 +1075,29 @@ void AssemblyBuilderX64::vpextrd(RegisterX64 dst, RegisterX64 src, uint8_t offse
     commit();
 }
 
+void AssemblyBuilderX64::vinsertf128(RegisterX64 dst, RegisterX64 src1, OperandX64 src2, uint8_t lane)
+{
+    CODEGEN_ASSERT(dst.size == SizeX64::ymmword && src1.size == SizeX64::ymmword);
+    CODEGEN_ASSERT(lane < 2);
+    placeAvx("vinsertf128", dst, src1, src2, lane, 0x18, false, AVX_0F3A, AVX_66);
+}
+
+void AssemblyBuilderX64::vextractf128(OperandX64 dst, RegisterX64 src, uint8_t lane)
+{
+    CODEGEN_ASSERT((dst.cat == CategoryX64::reg ? dst.base.size : dst.memSize) == SizeX64::xmmword);
+    CODEGEN_ASSERT(src.size == SizeX64::ymmword);
+    CODEGEN_ASSERT(lane < 2);
+
+    if (logText)
+        log("vextractf128", dst, src, lane);
+
+    placeVex(src, noreg, dst, false, AVX_0F3A, AVX_66);
+    place(0x19);
+    placeRegAndModRegMem(src, dst, /*extraCodeBytes=*/1);
+    placeImm8(lane);
+    commit();
+}
+
 void AssemblyBuilderX64::vdpps(OperandX64 dst, OperandX64 src1, OperandX64 src2, uint8_t mask)
 {
     placeAvx("vdpps", dst, src1, src2, mask, 0x40, false, AVX_0F3A, AVX_66);
