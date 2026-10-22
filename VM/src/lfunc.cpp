@@ -6,6 +6,8 @@
 #include "lmem.h"
 #include "lgc.h"
 
+#include <string.h>
+
 LUAU_FASTINTVARIABLE(LuauInlineHitsThreshold, 32)
 
 Proto* luaF_newproto(lua_State* L)
@@ -27,6 +29,7 @@ Proto* luaF_newproto(lua_State* L)
 
     f->execdata = NULL;
     f->exectarget = 0;
+    f->hotcount = 0;
 
     f->lineinfo = NULL;
     f->abslineinfo = NULL;
@@ -169,6 +172,22 @@ void luaF_closeupval(lua_State* L, UpVal* uv, bool dead)
     luaC_upvalclosed(L, uv);
 }
 
+static void removehot(global_State* g, Proto* p)
+{
+    for (int i = 0; i < g->hotqueuesize; i++)
+    {
+        if (g->hotqueue[i] == p)
+        {
+            // keep the queue ordered so that promotion stays oldest first
+            memmove(&g->hotqueue[i], &g->hotqueue[i + 1], (g->hotqueuesize - i - 1) * sizeof(Proto*));
+            g->hotqueuesize--;
+            return;
+        }
+    }
+
+    LUAU_ASSERT(!"queued proto is missing from the hot queue");
+}
+
 void luaF_freeproto(lua_State* L, Proto* f, lua_Page* page)
 {
     luaM_freearray(L, f->code, f->sizecode, Instruction, f->memcat);
@@ -183,6 +202,9 @@ void luaF_freeproto(lua_State* L, Proto* f, lua_Page* page)
 
     if (f->execdata)
         L->global->ecb.destroy(L, f);
+
+    if (f->hotcount < 0)
+        removehot(L->global, f);
 
     if (f->typeinfo)
         luaM_freearray(L, f->typeinfo, f->sizetypeinfo, uint8_t, f->memcat);
@@ -252,4 +274,51 @@ bool luaF_recordhit(lua_State* L, Closure* caller, Closure* target, uint32_t slo
     }
 
     return true;
+}
+
+void luaF_queuehot(lua_State* L, Proto* p)
+{
+    global_State* g = L->global;
+    LUAU_ASSERT(p->hotcount == 0);
+
+    if (g->hotqueuesize < g->hotqueuecapacity)
+    {
+        g->hotqueue[g->hotqueuesize++] = p;
+        p->hotcount = -1;
+    }
+    else
+    {
+        p->hotcount = g->hotthreshold;
+    }
+}
+
+void luaF_sethotqueuecapacity(lua_State* L, int capacity)
+{
+    global_State* g = L->global;
+    LUAU_ASSERT(capacity >= 0);
+
+    for (int i = capacity; i < g->hotqueuesize; i++)
+        g->hotqueue[i]->hotcount = 0;
+
+    if (g->hotqueuesize > capacity)
+        g->hotqueuesize = capacity;
+
+    g->hotqueue = luaM_reallocarray(L, g->hotqueue, g->hotqueuecapacity, capacity, Proto*, 0);
+    g->hotqueuecapacity = capacity;
+}
+
+int luaF_takehot(lua_State* L, Proto** out, int max)
+{
+    global_State* g = L->global;
+    int count = max < g->hotqueuesize ? max : g->hotqueuesize;
+
+    for (int i = 0; i < count; i++)
+    {
+        out[i] = g->hotqueue[i];
+        out[i]->hotcount = 0;
+    }
+
+    memmove(g->hotqueue, g->hotqueue + count, (g->hotqueuesize - count) * sizeof(Proto*));
+    g->hotqueuesize -= count;
+    return count;
 }

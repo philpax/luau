@@ -19,6 +19,12 @@ LUAI_FUNC void luaF_freeclosure(lua_State* L, Closure* c, struct lua_Page* page)
 LUAI_FUNC void luaF_freeupval(lua_State* L, UpVal* uv, struct lua_Page* page);
 LUAI_FUNC const LocVar* luaF_getlocal(const Proto* func, int local_number, int pc);
 LUAI_FUNC const LocVar* luaF_findlocal(const Proto* func, int local_reg, int pc);
+// Appends a proto whose hotcount ran out to the hot queue without allocating; a full queue rearms the counter instead.
+LUAI_FUNC void luaF_queuehot(lua_State* L, Proto* p);
+// Resizes the hot queue; protos that no longer fit stop counting.
+LUAI_FUNC void luaF_sethotqueuecapacity(lua_State* L, int capacity);
+// Removes and returns up to max queued protos, oldest first; the removed protos stop counting.
+LUAI_FUNC int luaF_takehot(lua_State* L, Proto** out, int max);
 // A feedback slot is sealed when luaF_recordhit returns false.
 LUAI_FUNC bool luaF_recordhit(lua_State* L, Closure* func, Closure* target, uint32_t slotid);
 // Define it in header to force inlining

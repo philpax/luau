@@ -136,6 +136,19 @@ CompilationResult compile(const ModuleId& moduleId, lua_State* L, int idx, unsig
 CompilationResult compile(lua_State* L, int idx, const CompilationOptions& options, CompilationStats* stats = nullptr);
 CompilationResult compile(const ModuleId& moduleId, lua_State* L, int idx, const CompilationOptions& options, CompilationStats* stats = nullptr);
 
+// Tier-up compilation. Protos loaded while the hot threshold is nonzero count interpreted entries and loop iterations, and join a bounded
+// queue when the count runs out. A threshold change applies to protos loaded afterwards. A full queue rearms the counter instead of growing.
+void setHotThreshold(lua_State* L, int threshold);
+
+// Resizes the hot queue; protos that no longer fit stop counting. This allocates VM memory and can raise a Lua memory error.
+void setHotQueueCapacity(lua_State* L, int capacity);
+
+[[nodiscard]] int getHotQueueSize(lua_State* L);
+
+// Compiles queued protos oldest first until the next one would exceed the bytecode instruction budget. The first uncompiled proto is always
+// taken. Already compiled protos are dropped from the queue without compiling. Nested functions are not compiled with their parent.
+CompilationResult compileHot(lua_State* L, size_t instructionBudget, CompilationStats* stats = nullptr);
+
 // Generates assembly for target function and all inner functions
 std::string getAssembly(lua_State* L, int idx, AssemblyOptions options = {}, LoweringStats* stats = nullptr);
 

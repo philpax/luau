@@ -12,6 +12,10 @@
 #include "Luau/UnwindBuilderWin.h"
 
 #include "lapi.h"
+#include "lfunc.h"
+#include "lstate.h"
+
+#include <algorithm>
 
 #include <stdio.h>
 
@@ -144,6 +148,10 @@ template<bool Release, typename NativeProtosVector>
 
         proto->exectarget = reinterpret_cast<uintptr_t>(header.entryOffsetOrAddress);
         proto->codeentry = &kCodeEntryInsn;
+
+        // A queued proto keeps its queue entry until promotion takes it, which then skips it as compiled.
+        if (proto->hotcount > 0)
+            proto->hotcount = 0;
 
         ++protosBound;
     }
@@ -543,6 +551,15 @@ template<typename AssemblyBuilder>
     return createNativeProtoExecData(proto, ir);
 }
 
+[[nodiscard]] static CompilationResult compileProtos(
+    const std::optional<ModuleId>& moduleId,
+    lua_State* L,
+    BaseCodeGenContext* codeGenContext,
+    const std::vector<Proto*>& protos,
+    const CompilationOptions& options,
+    CompilationStats* stats
+);
+
 [[nodiscard]] static CompilationResult compileInternal(
     const std::optional<ModuleId>& moduleId,
     lua_State* L,
@@ -582,6 +599,20 @@ template<typename AssemblyBuilder>
     if (protos.empty())
         return CompilationResult{CodeGenCompilationResult::NothingToCompile};
 
+    return compileProtos(moduleId, L, codeGenContext, protos, options, stats);
+}
+
+// Compiles uncompiled protos into one native module. Their bytecode ids must be unique and ascending, because the module sorts and binds its
+// functions by bytecode id.
+[[nodiscard]] static CompilationResult compileProtos(
+    const std::optional<ModuleId>& moduleId,
+    lua_State* L,
+    BaseCodeGenContext* codeGenContext,
+    const std::vector<Proto*>& protos,
+    const CompilationOptions& options,
+    CompilationStats* stats
+)
+{
     if (stats != nullptr)
         stats->functionsTotal = uint32_t(protos.size());
 
@@ -699,6 +730,115 @@ template<typename AssemblyBuilder>
         compilationResult.result = bindResult.compilationResult;
 
     return compilationResult;
+}
+
+static void addStats(CompilationStats& total, const CompilationStats& stats)
+{
+    total.bytecodeSizeBytes += stats.bytecodeSizeBytes;
+    total.nativeCodeSizeBytes += stats.nativeCodeSizeBytes;
+    total.nativeDataSizeBytes += stats.nativeDataSizeBytes;
+    total.nativeMetadataSizeBytes += stats.nativeMetadataSizeBytes;
+    total.functionsTotal += stats.functionsTotal;
+    total.functionsCompiled += stats.functionsCompiled;
+    total.functionsBound += stats.functionsBound;
+}
+
+void setHotThreshold(lua_State* L, int threshold)
+{
+    CODEGEN_ASSERT(threshold >= 0);
+    L->global->hotthreshold = threshold;
+}
+
+void setHotQueueCapacity(lua_State* L, int capacity)
+{
+    luaF_sethotqueuecapacity(L, capacity);
+}
+
+int getHotQueueSize(lua_State* L)
+{
+    return L->global->hotqueuesize;
+}
+
+CompilationResult compileHot(lua_State* L, size_t instructionBudget, CompilationStats* stats)
+{
+    BaseCodeGenContext* codeGenContext = getCodeGenContext(L);
+    if (codeGenContext == nullptr)
+        return CompilationResult{CodeGenCompilationResult::CodeGenNotInitialized};
+
+    global_State* g = L->global;
+    std::vector<Proto*> taken;
+    size_t instructions = 0;
+
+    // The first uncompiled proto is always taken, so a proto larger than the budget still promotes.
+    while (g->hotqueuesize > 0 && (taken.empty() || instructions + size_t(g->hotqueue[0]->sizecode) <= instructionBudget))
+    {
+        Proto* proto = nullptr;
+        luaF_takehot(L, &proto, 1);
+
+        if (proto->execdata != nullptr)
+            continue;
+
+        instructions += size_t(proto->sizecode);
+        taken.push_back(proto);
+    }
+
+    if (taken.empty())
+        return CompilationResult{CodeGenCompilationResult::NothingToCompile};
+
+    // Bytecode ids are unique only within one loaded chunk, so protos from different chunks can collide.
+    std::vector<std::vector<Proto*>> modules;
+    for (Proto* proto : taken)
+    {
+        auto module = std::find_if(
+            modules.begin(),
+            modules.end(),
+            [proto](const std::vector<Proto*>& members)
+            {
+                return std::none_of(
+                    members.begin(),
+                    members.end(),
+                    [proto](const Proto* member)
+                    {
+                        return member->bytecodeid == proto->bytecodeid;
+                    }
+                );
+            }
+        );
+
+        if (module == modules.end())
+            modules.emplace_back().push_back(proto);
+        else
+            module->push_back(proto);
+    }
+
+    // Promotion has runtime evidence that a function is hot, so the compiler's cold-function heuristic and module markers do not apply.
+    CompilationOptions options{CodeGen_ColdFunctions};
+    CompilationResult combined;
+
+    for (std::vector<Proto*>& members : modules)
+    {
+        std::sort(
+            members.begin(),
+            members.end(),
+            [](const Proto* left, const Proto* right)
+            {
+                return left->bytecodeid < right->bytecodeid;
+            }
+        );
+
+        CompilationStats moduleStats;
+        CompilationResult result = compileProtos({}, L, codeGenContext, members, options, stats != nullptr ? &moduleStats : nullptr);
+
+        if (stats != nullptr)
+            addStats(*stats, moduleStats);
+
+        if (result.result != CodeGenCompilationResult::Success && combined.result == CodeGenCompilationResult::Success)
+            combined.result = result.result;
+
+        combined.protoFailures.insert(combined.protoFailures.end(), result.protoFailures.begin(), result.protoFailures.end());
+    }
+
+    return combined;
 }
 
 CompilationResult compile(const ModuleId& moduleId, lua_State* L, int idx, const CompilationOptions& options, CompilationStats* stats)

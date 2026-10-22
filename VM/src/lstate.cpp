@@ -114,6 +114,8 @@ static void close_state(lua_State* L)
     luaF_close(L, L->stack); // close all upvalues for this thread
     luaC_freeall(L);         // collect all objects
     LUAU_ASSERT(g->strt.nuse == 0);
+    LUAU_ASSERT(g->hotqueuesize == 0); // freeing each queued proto removed it from the queue
+    luaM_freearray(L, g->hotqueue, g->hotqueuecapacity, Proto*, 0);
     luaM_freearray(L, L->global->strt.hash, L->global->strt.size, TString*, 0);
     freestack(L, L);
     for (int i = 0; i < LUA_SIZECLASSES; i++)
@@ -253,6 +255,11 @@ lua_State* lua_newstate(lua_Alloc allocator, void* ud)
         g->lastprotoid = 1;
         g->lastclassid = 1;
 
+        g->hotthreshold = 0;
+        g->hotqueue = NULL;
+        g->hotqueuesize = 0;
+        g->hotqueuecapacity = 0;
+
 #ifdef LUAI_GCMETRICS
         g->gcmetrics = GCMetrics();
 #endif
@@ -370,6 +377,11 @@ lua_State* lua_newstate(lua_Alloc allocator, void* ud)
         g->gcstats = GCStats();
         g->lastprotoid = 1;
         g->lastclassid = 1;
+
+        g->hotthreshold = 0;
+        g->hotqueue = NULL;
+        g->hotqueuesize = 0;
+        g->hotqueuecapacity = 0;
 
         g->builtinPcall = NULL;
         g->builtinXpcall = NULL;

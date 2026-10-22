@@ -272,6 +272,11 @@ typedef struct global_State
     uint32_t lastprotoid;
     uint32_t lastclassid;
 
+    int hotthreshold;          // initial hotcount for protos loaded from now on; 0 disables counting
+    struct Proto** hotqueue;   // protos whose hotcount ran out, oldest first, waiting for native compilation
+    int hotqueuesize;
+    int hotqueuecapacity;      // the queue never grows on the execution path; a full queue rearms the counter
+
 #ifdef LUAI_GCMETRICS
     GCMetrics gcmetrics;
 #endif

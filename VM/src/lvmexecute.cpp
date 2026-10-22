@@ -91,6 +91,15 @@ LUAU_FASTFLAGVARIABLE(LuauFastpcallInterrupt)
 #define VM_PATCH_AUX(pc, slot) *const_cast<Instruction*>(pc) = uint32_t(slot)
 #define VM_PATCH_AUX_SLOT(pc, k, slot) *const_cast<Instruction*>(pc) = ((k) | (uint32_t(slot) << 16))
 
+// Counts an interpreted entry or loop iteration towards native compilation of the proto.
+// Native code never reaches this, so a compiled proto stops counting without clearing its counter.
+#define VM_HOTCOUNT(proto) \
+    { \
+        Proto* hotproto = (proto); \
+        if (hotproto->hotcount > 0 && --hotproto->hotcount == 0) \
+            luaF_queuehot(L, hotproto); \
+    }
+
 #define VM_INTERRUPT() \
     { \
         void (*interrupt)(lua_State*, int) = L->global->cb.interrupt; \
@@ -298,6 +307,10 @@ reentry:
     cl = clvalue(L->ci->func);
     base = L->base;
     k = L->ci->p->k;
+
+    // a frame that starts here was entered from C or from native code, rather than through a call instruction
+    if (pc == L->ci->p->code)
+        VM_HOTCOUNT(L->ci->p);
 
     VM_NEXT(); // starts the interpreter "loop"
 
@@ -1133,6 +1146,8 @@ reentry:
                 {
                     Proto* p = ccl->l.p;
 
+                    VM_HOTCOUNT(p);
+
                     // fill unused parameters with nil
                     StkId argi = L->top;
                     StkId argend = L->base + p->numparams;
@@ -1235,6 +1250,8 @@ reentry:
                 if (!ccl->isC)
                 {
                     Proto* p = ccl->l.p;
+
+                    VM_HOTCOUNT(p);
 
                     if (feedback_slot != LUAU_INSN_FBSLOT_SEALED)
                     {
@@ -2631,6 +2648,7 @@ reentry:
             VM_CASE(LOP_FORNLOOP)
             {
                 VM_INTERRUPT();
+                VM_HOTCOUNT(cl->l.p);
                 if (FFlag::LuauBackedgeHeapCheck)
                     VM_CHECK_GC(L);
                 VM_CASE_INSTRUCTION insn = *pc++;
@@ -2782,6 +2800,7 @@ reentry:
             VM_CASE(LOP_FORGLOOP)
             {
                 VM_INTERRUPT();
+                VM_HOTCOUNT(cl->l.p);
                 if (FFlag::LuauBackedgeHeapCheck)
                     VM_CHECK_GC(L);
                 VM_CASE_INSTRUCTION insn = *pc++;
@@ -3076,6 +3095,7 @@ reentry:
             VM_CASE(LOP_JUMPBACK)
             {
                 VM_INTERRUPT();
+                VM_HOTCOUNT(cl->l.p);
                 if (FFlag::LuauBackedgeHeapCheck)
                     VM_CHECK_GC(L);
                 VM_CASE_INSTRUCTION insn = *pc++;
@@ -3102,6 +3122,9 @@ reentry:
                 if (FFlag::LuauBackedgeHeapCheck)
                     VM_CHECK_GC(L);
                 VM_CASE_INSTRUCTION insn = *pc++;
+
+                if (LUAU_INSN_E(insn) < 0)
+                    VM_HOTCOUNT(cl->l.p);
 
                 pc += LUAU_INSN_E(insn);
                 VM_ASSERT_PC(pc);
@@ -3828,6 +3851,8 @@ reentry:
 
                     Closure* fcl = clvalue(L->ci->func);
                     Proto* p = L->ci->p;
+
+                    VM_HOTCOUNT(p);
 
                     // reentry into the call (see LOP_CALL for description of how native calls are handled with 'codeentry')
                     pc = SingleStep ? p->code : p->codeentry;

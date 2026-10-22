@@ -5813,4 +5813,399 @@ TEST_CASE("JitInlinerLongJump")
     jitInliner = wasEnabled;
 }
 
+static int tierUpHotcount(lua_State* L, int idx)
+{
+    const Closure* cl = static_cast<const Closure*>(lua_topointer(L, idx));
+    return cl->l.p->hotcount;
+}
+
+static int tierUpGlobalHotcount(lua_State* L, const char* name)
+{
+    lua_getglobal(L, name);
+    int hotcount = tierUpHotcount(L, -1);
+    lua_pop(L, 1);
+    return hotcount;
+}
+
+static StateRef makeTierUpState(int threshold, int capacity)
+{
+    StateRef globalState(luaL_newstate(), lua_close);
+    lua_State* L = globalState.get();
+
+    luau_codegen_create(L);
+    luaL_openlibs(L);
+    setupNativeHelpers(L);
+    luaL_sandbox(L);
+    luaL_sandboxthread(L);
+
+    Luau::CodeGen::setHotThreshold(L, threshold);
+    Luau::CodeGen::setHotQueueCapacity(L, capacity);
+    return globalState;
+}
+
+// Loads a chunk without native compilation and leaves its function on the stack.
+static void loadTierUpChunk(lua_State* L, const char* name, const char* source)
+{
+    size_t bytecodeSize = 0;
+    char* bytecode = luau_compile(source, strlen(source), nullptr, &bytecodeSize);
+    int result = luau_load(L, name, bytecode, bytecodeSize, 0);
+    free(bytecode);
+    REQUIRE(result == 0);
+}
+
+static void runTierUpChunk(lua_State* L, const char* name, const char* source)
+{
+    loadTierUpChunk(L, name, source);
+    REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
+}
+
+// Calls a global with one number argument and returns its boolean result.
+static bool callTierUpGlobal(lua_State* L, const char* name, double argument)
+{
+    lua_getglobal(L, name);
+    lua_pushnumber(L, argument);
+    int status = lua_pcall(L, 1, 1, 0);
+    if (status != 0)
+        FAIL(std::string(lua_tostring(L, -1)));
+    bool result = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    return result;
+}
+
+TEST_CASE("TierUpQueuesAfterThresholdCallsAndPromotes")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(10, 8);
+    lua_State* L = globalState.get();
+
+    runTierUpChunk(L, "=TierUpCalls", R"(
+        function f() return is_native() end
+        function call(n) local r for i = 1, n do r = f() end return r end
+    )");
+
+    CHECK_FALSE(callTierUpGlobal(L, "call", 9));
+    CHECK_EQ(tierUpGlobalHotcount(L, "f"), 1);
+
+    CHECK_FALSE(callTierUpGlobal(L, "call", 1));
+    CHECK_EQ(tierUpGlobalHotcount(L, "f"), -1);
+
+    Luau::CodeGen::CompilationStats stats = {};
+    Luau::CodeGen::CompilationResult result = Luau::CodeGen::compileHot(L, SIZE_MAX, &stats);
+    CHECK(result.result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    CHECK(result.protoFailures.empty());
+    CHECK_GE(stats.functionsBound, 1);
+    CHECK_EQ(Luau::CodeGen::getHotQueueSize(L), 0);
+    CHECK_EQ(tierUpGlobalHotcount(L, "f"), 0);
+
+    CHECK(callTierUpGlobal(L, "call", 1));
+}
+
+TEST_CASE("TierUpCountsLoopIterations")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(50, 8);
+    lua_State* L = globalState.get();
+
+    runTierUpChunk(L, "=TierUpLoops", R"(
+        function numeric(n) local s = 0 for i = 1, n do s += i end return is_native() end
+        function generic(n) local t = table.create(n, 1) for _ in ipairs(t) do end return is_native() end
+        function whileloop(n) local i = 0 while i < n do i += 1 end return is_native() end
+        function repeatloop(n) local i = 0 repeat i += 1 until i >= n return is_native() end
+    )");
+
+    const char* names[] = {"numeric", "generic", "whileloop", "repeatloop"};
+
+    for (const char* name : names)
+    {
+        CAPTURE(std::string(name));
+        CHECK_FALSE(callTierUpGlobal(L, name, 100));
+        CHECK_EQ(tierUpGlobalHotcount(L, name), -1);
+    }
+
+    CHECK_EQ(Luau::CodeGen::getHotQueueSize(L), 4);
+    CHECK(Luau::CodeGen::compileHot(L, SIZE_MAX).result == Luau::CodeGen::CodeGenCompilationResult::Success);
+
+    for (const char* name : names)
+    {
+        CAPTURE(std::string(name));
+        CHECK(callTierUpGlobal(L, name, 100));
+    }
+}
+
+TEST_CASE("TierUpCountsEntriesFromC")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(3, 8);
+    lua_State* L = globalState.get();
+
+    runTierUpChunk(L, "=TierUpEntriesFromC", "function f() return is_native() end");
+
+    callTierUpGlobal(L, "f", 0);
+    callTierUpGlobal(L, "f", 0);
+    CHECK_EQ(tierUpGlobalHotcount(L, "f"), 1);
+
+    callTierUpGlobal(L, "f", 0);
+    CHECK_EQ(tierUpGlobalHotcount(L, "f"), -1);
+}
+
+TEST_CASE("TierUpCountsEntriesFromNativeCode")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(5, 8);
+    lua_State* L = globalState.get();
+
+    runTierUpChunk(L, "=TierUpLeaf", "function leaf() return is_native() end");
+
+    loadTierUpChunk(L, "=TierUpNativeCaller", "function caller(n) local r for i = 1, n do r = leaf() end return r end");
+    Luau::CodeGen::CompilationResult compiled = Luau::CodeGen::compile(L, -1, Luau::CodeGen::CodeGen_ColdFunctions);
+    REQUIRE(compiled.result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
+
+    // Binding native code stops the compiled proto counting.
+    CHECK_EQ(tierUpGlobalHotcount(L, "caller"), 0);
+
+    CHECK_FALSE(callTierUpGlobal(L, "caller", 4));
+    CHECK_EQ(tierUpGlobalHotcount(L, "leaf"), 1);
+
+    CHECK_FALSE(callTierUpGlobal(L, "caller", 1));
+    CHECK_EQ(tierUpGlobalHotcount(L, "leaf"), -1);
+    CHECK_EQ(Luau::CodeGen::getHotQueueSize(L), 1);
+
+    CHECK(Luau::CodeGen::compileHot(L, SIZE_MAX).result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    CHECK(callTierUpGlobal(L, "caller", 1));
+}
+
+TEST_CASE("TierUpFullQueueRearmsCounter")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(2, 1);
+    lua_State* L = globalState.get();
+
+    runTierUpChunk(L, "=TierUpFullQueue", R"(
+        function f() return is_native() end
+        function g() return is_native() end
+    )");
+
+    callTierUpGlobal(L, "f", 0);
+    callTierUpGlobal(L, "f", 0);
+    CHECK_EQ(tierUpGlobalHotcount(L, "f"), -1);
+
+    callTierUpGlobal(L, "g", 0);
+    callTierUpGlobal(L, "g", 0);
+    CHECK_EQ(tierUpGlobalHotcount(L, "g"), 2);
+    CHECK_EQ(Luau::CodeGen::getHotQueueSize(L), 1);
+
+    CHECK(Luau::CodeGen::compileHot(L, SIZE_MAX).result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    CHECK(callTierUpGlobal(L, "f", 0));
+
+    callTierUpGlobal(L, "g", 0);
+    CHECK_FALSE(callTierUpGlobal(L, "g", 0));
+    CHECK_EQ(tierUpGlobalHotcount(L, "g"), -1);
+
+    CHECK(Luau::CodeGen::compileHot(L, SIZE_MAX).result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    CHECK(callTierUpGlobal(L, "g", 0));
+}
+
+TEST_CASE("TierUpCollectedProtoLeavesQueue")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(2, 8);
+    lua_State* L = globalState.get();
+
+    runTierUpChunk(L, "=TierUpCollected", "local function f() end f() f()");
+    CHECK_EQ(Luau::CodeGen::getHotQueueSize(L), 1);
+
+    lua_gc(L, LUA_GCCOLLECT, 0);
+    CHECK_EQ(Luau::CodeGen::getHotQueueSize(L), 0);
+    CHECK(Luau::CodeGen::compileHot(L, SIZE_MAX).result == Luau::CodeGen::CodeGenCompilationResult::NothingToCompile);
+
+    // Closing the state frees protos that are still queued.
+    runTierUpChunk(L, "=TierUpQueuedAtClose", "function g() end g() g()");
+    CHECK_EQ(Luau::CodeGen::getHotQueueSize(L), 1);
+}
+
+TEST_CASE("TierUpRespectsInstructionBudget")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(1, 8);
+    lua_State* L = globalState.get();
+
+    runTierUpChunk(L, "=TierUpBudget", R"(
+        function a() return is_native() end
+        function b() return is_native() end
+        function c() return is_native() end
+    )");
+
+    // The chunk body queued itself on entry; promote it alone first.
+    Luau::CodeGen::CompilationStats body = {};
+    CHECK(Luau::CodeGen::compileHot(L, 0, &body).result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    CHECK_EQ(body.functionsCompiled, 1);
+
+    callTierUpGlobal(L, "a", 0);
+    callTierUpGlobal(L, "b", 0);
+    callTierUpGlobal(L, "c", 0);
+    CHECK_EQ(Luau::CodeGen::getHotQueueSize(L), 3);
+
+    Luau::CodeGen::CompilationStats first = {};
+    CHECK(Luau::CodeGen::compileHot(L, 0, &first).result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    CHECK_EQ(first.functionsCompiled, 1);
+    CHECK_EQ(Luau::CodeGen::getHotQueueSize(L), 2);
+    CHECK(callTierUpGlobal(L, "a", 0));
+    CHECK_FALSE(callTierUpGlobal(L, "b", 0));
+
+    Luau::CodeGen::CompilationStats rest = {};
+    CHECK(Luau::CodeGen::compileHot(L, SIZE_MAX, &rest).result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    CHECK_EQ(rest.functionsCompiled, 2);
+    CHECK(callTierUpGlobal(L, "b", 0));
+    CHECK(callTierUpGlobal(L, "c", 0));
+}
+
+TEST_CASE("TierUpSeparatesCollidingBytecodeIds")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(1, 8);
+    lua_State* L = globalState.get();
+
+    runTierUpChunk(L, "=TierUpOne", "function one() return 1, is_native() end");
+    runTierUpChunk(L, "=TierUpTwo", "function two() return 2, is_native() end");
+
+    lua_getglobal(L, "one");
+    lua_getglobal(L, "two");
+    const Closure* one = static_cast<const Closure*>(lua_topointer(L, -2));
+    const Closure* two = static_cast<const Closure*>(lua_topointer(L, -1));
+    REQUIRE_EQ(one->l.p->bytecodeid, two->l.p->bytecodeid);
+    lua_pop(L, 2);
+
+    callTierUpGlobal(L, "one", 0);
+    callTierUpGlobal(L, "two", 0);
+
+    // Both chunk bodies and both functions are queued, in pairs that share bytecode ids.
+    CHECK_EQ(Luau::CodeGen::getHotQueueSize(L), 4);
+
+    Luau::CodeGen::CompilationStats stats = {};
+    Luau::CodeGen::CompilationResult result = Luau::CodeGen::compileHot(L, SIZE_MAX, &stats);
+    CHECK(result.result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    CHECK_EQ(stats.functionsBound, 4);
+
+    const char* names[] = {"one", "two"};
+
+    for (int i = 0; i < 2; i++)
+    {
+        CAPTURE(names[i]);
+        lua_getglobal(L, names[i]);
+        REQUIRE(lua_pcall(L, 0, 2, 0) == 0);
+        CHECK_EQ(lua_tonumber(L, -2), i + 1);
+        CHECK(lua_toboolean(L, -1));
+        lua_pop(L, 2);
+    }
+}
+
+TEST_CASE("TierUpZeroThresholdDoesNotCount")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(0, 8);
+    lua_State* L = globalState.get();
+
+    runTierUpChunk(L, "=TierUpDisabled", "function f() return is_native() end for i = 1, 1000 do f() end");
+
+    CHECK_EQ(tierUpGlobalHotcount(L, "f"), 0);
+    CHECK_EQ(Luau::CodeGen::getHotQueueSize(L), 0);
+}
+
+TEST_CASE("TierUpSkipsProtosCompiledWhileQueued")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(1, 8);
+    lua_State* L = globalState.get();
+
+    loadTierUpChunk(L, "=TierUpCompiledWhileQueued", "function f() return is_native() end");
+    lua_pushvalue(L, -1);
+    REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
+    callTierUpGlobal(L, "f", 0);
+    CHECK_EQ(Luau::CodeGen::getHotQueueSize(L), 2);
+
+    REQUIRE(Luau::CodeGen::compile(L, -1, Luau::CodeGen::CodeGen_ColdFunctions).result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    CHECK_EQ(tierUpGlobalHotcount(L, "f"), -1);
+
+    CHECK(Luau::CodeGen::compileHot(L, SIZE_MAX).result == Luau::CodeGen::CodeGenCompilationResult::NothingToCompile);
+    CHECK_EQ(Luau::CodeGen::getHotQueueSize(L), 0);
+    CHECK_EQ(tierUpGlobalHotcount(L, "f"), 0);
+    CHECK(callTierUpGlobal(L, "f", 0));
+}
+
+TEST_CASE("TierUpLeavesActiveFramesInterpreted")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(1, 8);
+    lua_State* L = globalState.get();
+
+    lua_pushcclosurek(
+        L,
+        [](lua_State* L) -> int
+        {
+            Luau::CodeGen::CompilationResult result = Luau::CodeGen::compileHot(L, SIZE_MAX);
+            lua_pushboolean(L, result.result == Luau::CodeGen::CodeGenCompilationResult::Success);
+            lua_pushstring(L, Luau::CodeGen::toString(result.result).c_str());
+            return 2;
+        },
+        "promote",
+        0,
+        nullptr
+    );
+    lua_setglobal(L, "promote");
+
+    runTierUpChunk(L, "=TierUpActive", R"(
+        function f(request)
+            if request == 1 then
+                local ok, why = promote()
+                assert(ok, why)
+                return is_native()
+            end
+            return is_native()
+        end
+
+        function suspended()
+            local before = is_native()
+            coroutine.yield()
+            return before, is_native()
+        end
+    )");
+
+    // The frame that requested promotion continues in the interpreter; the next call enters native code.
+    CHECK_FALSE(callTierUpGlobal(L, "f", 1));
+    CHECK(callTierUpGlobal(L, "f", 0));
+
+    // A coroutine suspended in a promoted function resumes in the interpreter.
+    lua_State* co = lua_newthread(L);
+    lua_getglobal(co, "suspended");
+    REQUIRE(lua_resume(co, L, 0) == LUA_YIELD);
+    CHECK(Luau::CodeGen::compileHot(L, SIZE_MAX).result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    REQUIRE(lua_resume(co, L, 0) == LUA_OK);
+    CHECK_FALSE(lua_toboolean(co, -2));
+    CHECK_FALSE(lua_toboolean(co, -1));
+    lua_pop(L, 1);
+}
+
 TEST_SUITE_END();

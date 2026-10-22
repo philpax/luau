@@ -488,6 +488,7 @@ static int loadsafe(
             p->code[j] = read<uint32_t>(data, size, offset);
 
         p->codeentry = p->code;
+        p->hotcount = L->global->hotthreshold;
 
         const int sizek = readVarInt(data, size, offset);
         p->k = luaM_newarray(L, sizek, TValue, p->memcat);

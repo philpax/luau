@@ -409,6 +409,10 @@ typedef struct Proto
     void* execdata;
     uintptr_t exectarget;
 
+    // interpreted entries and loop iterations left before the proto queues for native compilation
+    // 0 when the proto is not counting, and -1 while it is in the global hot queue
+    int hotcount;
+
     uint8_t* lineinfo;      // for each instruction, line number as a delta from baseline
     int* abslineinfo;       // baseline line info, one entry for each 1<<linegaplog2 instructions; allocated after lineinfo
     struct LocVar* locvars; // information about local variables
