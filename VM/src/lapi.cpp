@@ -956,6 +956,11 @@ void lua_setsafeenv(lua_State* L, int objindex, int enabled)
     t->safeenv = bool(enabled);
 }
 
+void lua_setresolveimports(lua_State* L, int enabled)
+{
+    L->global->resolveimports = bool(enabled);
+}
+
 int lua_getmetatable(lua_State* L, int objindex)
 {
     luaC_threadbarrier(L);

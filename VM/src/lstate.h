@@ -272,6 +272,7 @@ typedef struct global_State
     uint32_t lastprotoid;
     uint32_t lastclassid;
 
+    bool resolveimports;       // whether loading resolves imports against a safe environment
     int hotthreshold;          // initial hotcount for protos loaded from now on; 0 disables counting
     struct Proto** hotqueue;   // protos whose hotcount ran out, oldest first, waiting for native compilation
     int hotqueuesize;

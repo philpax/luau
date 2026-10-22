@@ -239,6 +239,9 @@ LUA_API void lua_createtable(lua_State* L, int narr, int nrec);
 LUA_API void lua_setreadonly(lua_State* L, int idx, int enabled);
 LUA_API int lua_getreadonly(lua_State* L, int idx);
 LUA_API void lua_setsafeenv(lua_State* L, int idx, int enabled);
+// Whether loading resolves imports such as `a.b.c` once against a safe environment. Disabling it keeps builtin fast
+// paths in safe environments while every import is looked up when it runs, so later changes to imported tables are seen.
+LUA_API void lua_setresolveimports(lua_State* L, int enabled);
 
 LUA_API int lua_getmetatable(lua_State* L, int objindex);
 LUA_API void lua_getfenv(lua_State* L, int idx);

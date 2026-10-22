@@ -255,6 +255,7 @@ lua_State* lua_newstate(lua_Alloc allocator, void* ud)
         g->lastprotoid = 1;
         g->lastclassid = 1;
 
+        g->resolveimports = true;
         g->hotthreshold = 0;
         g->hotqueue = NULL;
         g->hotqueuesize = 0;
@@ -378,6 +379,7 @@ lua_State* lua_newstate(lua_Alloc allocator, void* ud)
         g->lastprotoid = 1;
         g->lastclassid = 1;
 
+        g->resolveimports = true;
         g->hotthreshold = 0;
         g->hotqueue = NULL;
         g->hotqueuesize = 0;

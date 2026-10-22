@@ -6208,4 +6208,39 @@ TEST_CASE("TierUpLeavesActiveFramesInterpreted")
     lua_pop(L, 1);
 }
 
+TEST_CASE("SafeEnvWithoutImportResolutionSeesChangedImports")
+{
+    for (bool resolve : {true, false})
+    {
+        CAPTURE(resolve);
+        StateRef globalState(luaL_newstate(), lua_close);
+        lua_State* L = globalState.get();
+        luaL_openlibs(L);
+        lua_setresolveimports(L, resolve);
+
+        lua_newtable(L);
+        lua_pushnumber(L, 1);
+        lua_setfield(L, -2, "value");
+        lua_setglobal(L, "settings");
+        lua_setsafeenv(L, LUA_GLOBALSINDEX, true);
+
+        const char* source = "return settings.value, math.max(3, 4)";
+        size_t bytecodeSize = 0;
+        char* bytecode = luau_compile(source, strlen(source), nullptr, &bytecodeSize);
+        REQUIRE(luau_load(L, "=SafeEnvImports", bytecode, bytecodeSize, 0) == 0);
+        free(bytecode);
+
+        // Another script replaces the table after this chunk loaded.
+        lua_newtable(L);
+        lua_pushnumber(L, 2);
+        lua_setfield(L, -2, "value");
+        lua_setglobal(L, "settings");
+        REQUIRE(lua_pcall(L, 0, 2, 0) == 0);
+
+        // A resolved import keeps the table it found at load; an unresolved one reads the replacement.
+        CHECK_EQ(lua_tonumber(L, -2), resolve ? 1 : 2);
+        CHECK_EQ(lua_tonumber(L, -1), 4);
+    }
+}
+
 TEST_SUITE_END();
