@@ -1813,17 +1813,17 @@ static int luauF_vectorunpack(lua_State* L, StkId res, TValue* arg0, int nresult
         if (nresults <= 4)
         {
             setnvalue(res, v[0]);
-            if (nresults >= 2) setnvalue(res + 1, v[1]);
-            if (nresults >= 3) setnvalue(res + 2, v[2]);
-            if (nresults >= 4) setnvalue(res + 3, v[3]);
+            if (nresults < 0 || nresults >= 2) setnvalue(res + 1, v[1]);
+            if (nresults < 0 || nresults >= 3) setnvalue(res + 2, v[2]);
+            if (nresults < 0 || nresults >= 4) setnvalue(res + 3, v[3]);
             return nresults < 0 ? 4 : nresults;
         }
 #else
         if (nresults <= 3)
         {
             setnvalue(res, v[0]);
-            if (nresults >= 2) setnvalue(res + 1, v[1]);
-            if (nresults >= 3) setnvalue(res + 2, v[2]);
+            if (nresults < 0 || nresults >= 2) setnvalue(res + 1, v[1]);
+            if (nresults < 0 || nresults >= 3) setnvalue(res + 2, v[2]);
             return nresults < 0 ? 3 : nresults;
         }
 #endif
@@ -1904,9 +1904,9 @@ static int luauF_quaternionunpack(lua_State* L, StkId res, TValue* arg0, int nre
             float w = luaui_maxf(q[3] / 32767.f, -1.f);
 
             setnvalue(res, x);
-            if (nresults >= 2) setnvalue(res + 1, y);
-            if (nresults >= 3) setnvalue(res + 2, z);
-            if (nresults >= 4) setnvalue(res + 3, w);
+            if (nresults < 0 || nresults >= 2) setnvalue(res + 1, y);
+            if (nresults < 0 || nresults >= 3) setnvalue(res + 2, z);
+            if (nresults < 0 || nresults >= 4) setnvalue(res + 3, w);
             return nresults < 0 ? 4 : nresults;
         }
     }
@@ -1968,9 +1968,9 @@ static int luauF_quaterniontoangleaxis(lua_State* L, StkId res, TValue* arg0, in
             s = s < 0.0001f ? 1.f : 1.f / s;
 
             setnvalue(res, 2.f * acosf(w));
-            if (nresults >= 2) setnvalue(res + 1, x * s);
-            if (nresults >= 3) setnvalue(res + 2, y * s);
-            if (nresults >= 4) setnvalue(res + 3, z * s);
+            if (nresults < 0 || nresults >= 2) setnvalue(res + 1, x * s);
+            if (nresults < 0 || nresults >= 3) setnvalue(res + 2, y * s);
+            if (nresults < 0 || nresults >= 4) setnvalue(res + 3, z * s);
             return nresults < 0 ? 4 : nresults;
         }
     }

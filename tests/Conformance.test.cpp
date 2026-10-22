@@ -6243,4 +6243,63 @@ TEST_CASE("SafeEnvWithoutImportResolutionSeesChangedImports")
     }
 }
 
+// Runs a chunk and returns its single string result, compiling it to native code when requested.
+static std::string runMultipleResultChunk(bool sandboxed, bool native, const char* source)
+{
+    StateRef globalState(luaL_newstate(), lua_close);
+    lua_State* L = globalState.get();
+    if (native)
+        luau_codegen_create(L);
+    luaL_openlibs(L);
+    if (sandboxed)
+    {
+        luaL_sandbox(L);
+        luaL_sandboxthread(L);
+    }
+
+    size_t bytecodeSize = 0;
+    char* bytecode = luau_compile(source, strlen(source), nullptr, &bytecodeSize);
+    int loaded = luau_load(L, "=MultipleResults", bytecode, bytecodeSize, 0);
+    free(bytecode);
+    REQUIRE(loaded == 0);
+    if (native)
+        Luau::CodeGen::compile(L, -1, Luau::CodeGen::CodeGen_ColdFunctions);
+    int status = lua_pcall(L, 0, 1, 0);
+    if (status != 0)
+        FAIL(std::string(lua_tostring(L, -1)));
+    return lua_tostring(L, -1);
+}
+
+TEST_CASE("VectorAndQuaternionUnpackFillEveryResultWhenTheCountIsOpen")
+{
+    // A safe environment takes the builtin fast paths; an unsafe one calls the library functions, which are the oracle.
+    const char* source = R"(
+        local v = vector.create(1, 2, 3)
+        local q = quaternion.angleaxis(0.5, 0, 1, 0)
+        local function tail(f, value) return f(value) end
+        local function show(...)
+            local parts = { tostring(select('#', ...)) }
+            for index = 1, select('#', ...) do
+                parts[#parts + 1] = string.format('%.6f', (select(index, ...)))
+            end
+            return table.concat(parts, ' ')
+        end
+        local results = {
+            show(vector.unpack(v)),
+            show(tail(vector.unpack, v)),
+            show(table.unpack({ vector.unpack(v) })),
+            show(quaternion.unpack(q)),
+            show(tail(quaternion.unpack, q)),
+            show(quaternion.toangleaxis(q)),
+            show(tail(quaternion.toangleaxis, q)),
+        }
+        return table.concat(results, ' | ')
+    )";
+
+    std::string oracle = runMultipleResultChunk(false, false, source);
+    CHECK_EQ(runMultipleResultChunk(true, false, source), oracle);
+    if (codegen && luau_codegen_supported())
+        CHECK_EQ(runMultipleResultChunk(true, true, source), oracle);
+}
+
 TEST_SUITE_END();
