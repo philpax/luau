@@ -916,6 +916,13 @@ static void markfastpcalls(global_State* g)
         markobject(g, g->builtinXpcall);
 }
 
+// Protos compiled away from the VM thread are read until their batch binds, so they stay alive.
+static void markhotinflight(global_State* g)
+{
+    for (int i = 0; i < g->hotinflightsize; i++)
+        markobject(g, g->hotinflight[i]);
+}
+
 // mark root set
 static void markroot(lua_State* L)
 {
@@ -940,6 +947,8 @@ static void markroot(lua_State* L)
 
     if (FFlag::LuauFastpcall)
         markfastpcalls(g);
+
+    markhotinflight(g);
 
     markmt(g);
 
@@ -1037,6 +1046,8 @@ static size_t atomic(lua_State* L)
 
     if (FFlag::LuauFastpcall)
         markfastpcalls(g);
+
+    markhotinflight(g); // mark protos pinned during the cycle
 
     work += propagateall(g);
 

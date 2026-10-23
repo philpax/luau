@@ -322,3 +322,40 @@ int luaF_takehot(lua_State* L, Proto** out, int max)
     g->hotqueuesize -= count;
     return count;
 }
+
+void luaF_reservepins(lua_State* L, int count)
+{
+    global_State* g = L->global;
+    int needed = g->hotinflightsize + count;
+    if (needed <= g->hotinflightcapacity)
+        return;
+
+    int capacity = g->hotinflightcapacity == 0 ? 16 : g->hotinflightcapacity;
+    while (capacity < needed)
+        capacity *= 2;
+    g->hotinflight = luaM_reallocarray(L, g->hotinflight, g->hotinflightcapacity, capacity, Proto*, 0);
+    g->hotinflightcapacity = capacity;
+}
+
+void luaF_pinhot(lua_State* L, Proto* p)
+{
+    global_State* g = L->global;
+    LUAU_ASSERT(g->hotinflightsize < g->hotinflightcapacity);
+    g->hotinflight[g->hotinflightsize++] = p;
+    // A pin added after the root mark is still marked, because the atomic phase marks the in-flight list again.
+}
+
+void luaF_unpinhot(lua_State* L, Proto* p)
+{
+    global_State* g = L->global;
+    for (int i = 0; i < g->hotinflightsize; i++)
+    {
+        if (g->hotinflight[i] == p)
+        {
+            g->hotinflight[i] = g->hotinflight[--g->hotinflightsize];
+            return;
+        }
+    }
+
+    LUAU_ASSERT(!"unpinned proto is not in flight");
+}

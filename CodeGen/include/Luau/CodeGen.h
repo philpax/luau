@@ -149,6 +149,17 @@ void setHotQueueCapacity(lua_State* L, int capacity);
 // taken. Already compiled protos are dropped from the queue without compiling. Nested functions are not compiled with their parent.
 CompilationResult compileHot(lua_State* L, size_t instructionBudget, CompilationStats* stats = nullptr);
 
+// Promotion split so that code generation can run away from the VM thread. takeHot dequeues protos as compileHot does, snapshots their
+// bytecode, and keeps them alive; it returns nullptr when nothing needs compiling. compileHotBatch generates code from the snapshots and
+// touches no VM state, so any one thread may run it while the VM continues. bindHotBatch installs the code on the VM thread, skipping protos
+// compiled through another path or given a breakpoint meanwhile, and frees the batch. discardHotBatch frees a batch without installing it.
+// Every batch is bound or discarded on the VM thread before the VM closes, and never while compileHotBatch is still running on it.
+struct HotBatch;
+[[nodiscard]] HotBatch* takeHot(lua_State* L, size_t instructionBudget);
+void compileHotBatch(HotBatch* batch);
+CompilationResult bindHotBatch(lua_State* L, HotBatch* batch, CompilationStats* stats = nullptr);
+void discardHotBatch(lua_State* L, HotBatch* batch);
+
 // Generates assembly for target function and all inner functions
 std::string getAssembly(lua_State* L, int idx, AssemblyOptions options = {}, LoweringStats* stats = nullptr);
 

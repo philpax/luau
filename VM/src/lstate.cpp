@@ -116,6 +116,9 @@ static void close_state(lua_State* L)
     LUAU_ASSERT(g->strt.nuse == 0);
     LUAU_ASSERT(g->hotqueuesize == 0); // freeing each queued proto removed it from the queue
     luaM_freearray(L, g->hotqueue, g->hotqueuecapacity, Proto*, 0);
+    // A batch still pinned here was leaked rather than released. Closing is safe once no thread compiles it, which the embedder ensures;
+    // the VM cannot observe that, so it frees the protos as usual.
+    luaM_freearray(L, g->hotinflight, g->hotinflightcapacity, Proto*, 0);
     luaM_freearray(L, L->global->strt.hash, L->global->strt.size, TString*, 0);
     freestack(L, L);
     for (int i = 0; i < LUA_SIZECLASSES; i++)
@@ -260,6 +263,9 @@ lua_State* lua_newstate(lua_Alloc allocator, void* ud)
         g->hotqueue = NULL;
         g->hotqueuesize = 0;
         g->hotqueuecapacity = 0;
+        g->hotinflight = NULL;
+        g->hotinflightsize = 0;
+        g->hotinflightcapacity = 0;
 
 #ifdef LUAI_GCMETRICS
         g->gcmetrics = GCMetrics();
@@ -384,6 +390,9 @@ lua_State* lua_newstate(lua_Alloc allocator, void* ud)
         g->hotqueue = NULL;
         g->hotqueuesize = 0;
         g->hotqueuecapacity = 0;
+        g->hotinflight = NULL;
+        g->hotinflightsize = 0;
+        g->hotinflightcapacity = 0;
 
         g->builtinPcall = NULL;
         g->builtinXpcall = NULL;

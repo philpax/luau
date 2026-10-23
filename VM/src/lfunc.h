@@ -25,6 +25,11 @@ LUAI_FUNC void luaF_queuehot(lua_State* L, Proto* p);
 LUAI_FUNC void luaF_sethotqueuecapacity(lua_State* L, int capacity);
 // Removes and returns up to max queued protos, oldest first; the removed protos stop counting.
 LUAI_FUNC int luaF_takehot(lua_State* L, Proto** out, int max);
+// Keeps a proto alive while code is generated for it away from the VM thread. Pins nest, and each needs an unpin.
+// luaF_reservepins makes room for `count` more pins and can raise a memory error; luaF_pinhot then cannot fail.
+LUAI_FUNC void luaF_reservepins(lua_State* L, int count);
+LUAI_FUNC void luaF_pinhot(lua_State* L, Proto* p);
+LUAI_FUNC void luaF_unpinhot(lua_State* L, Proto* p);
 // A feedback slot is sealed when luaF_recordhit returns false.
 LUAI_FUNC bool luaF_recordhit(lua_State* L, Closure* func, Closure* target, uint32_t slotid);
 // Define it in header to force inlining

@@ -277,6 +277,9 @@ typedef struct global_State
     struct Proto** hotqueue;   // protos whose hotcount ran out, oldest first, waiting for native compilation
     int hotqueuesize;
     int hotqueuecapacity;      // the queue never grows on the execution path; a full queue rearms the counter
+    struct Proto** hotinflight; // protos taken for compilation away from the VM thread, which the collector keeps alive
+    int hotinflightsize;
+    int hotinflightcapacity;
 
 #ifdef LUAI_GCMETRICS
     GCMetrics gcmetrics;

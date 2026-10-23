@@ -7,6 +7,8 @@
 #include "luacodegen.h"
 #include "luajitinliner.h"
 #include "../VM/src/lobject.h"
+#include "../VM/src/lgc.h"
+#include "../VM/src/lstate.h"
 
 #include "Luau/BuiltinDefinitions.h"
 #include "Luau/DenseHash.h"
@@ -26,6 +28,7 @@
 #include "ConformanceIrHooks.h"
 
 #include <cstdlib>
+#include <thread>
 #include <fstream>
 #include <string>
 #include <unordered_map>
@@ -6300,6 +6303,196 @@ TEST_CASE("VectorAndQuaternionUnpackFillEveryResultWhenTheCountIsOpen")
     CHECK_EQ(runMultipleResultChunk(true, false, source), oracle);
     if (codegen && luau_codegen_supported())
         CHECK_EQ(runMultipleResultChunk(true, true, source), oracle);
+}
+
+TEST_CASE("TierUpBatchCompilesOnAnotherThreadWhileTheVmRunsAndCollects")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(1, 8);
+    lua_State* L = globalState.get();
+
+    runTierUpChunk(L, "=TierUpBatchThread", R"(
+        point = { x = 1, y = 2 }
+        -- Field lookups make the interpreter patch cached slots into f's bytecode while the worker compiles it.
+        function f(n) local p = point local total = 0 for i = 1, n do total += p.x + p.y end return is_native(), total end
+        -- Reshaping the table invalidates f's cached slots, so the interpreter keeps rewriting them during compilation.
+        local shape = 0
+        function churn()
+            shape += 1
+            point = { [`pad{shape}`] = shape, x = 1, [`more{shape}`] = shape, y = 2 }
+            local kept = {} for i = 1, 2000 do kept[i % 64] = { i, tostring(i) } end return #kept
+        end
+    )");
+    callTierUpGlobal(L, "f", 10);
+    while (Luau::CodeGen::getHotQueueSize(L) > 1)
+        Luau::CodeGen::compileHot(L, 0);
+    REQUIRE_EQ(tierUpGlobalHotcount(L, "f"), -1);
+
+    Luau::CodeGen::HotBatch* batch = Luau::CodeGen::takeHot(L, SIZE_MAX);
+    REQUIRE(batch != nullptr);
+    CHECK_EQ(L->global->hotinflightsize, 1);
+
+    std::thread worker(
+        [batch]
+        {
+            Luau::CodeGen::compileHotBatch(batch);
+        }
+    );
+    // The VM keeps running, allocating, and collecting while the worker reads the snapshot.
+    for (int i = 0; i < 50; i++)
+    {
+        CHECK_FALSE(callTierUpGlobal(L, "f", 100));
+        callTierUpGlobal(L, "churn", 0);
+        lua_gc(L, LUA_GCSTEP, 64);
+    }
+    lua_gc(L, LUA_GCCOLLECT, 0);
+    worker.join();
+
+    Luau::CodeGen::CompilationStats stats = {};
+    CHECK(Luau::CodeGen::bindHotBatch(L, batch, &stats).result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    CHECK_EQ(stats.functionsBound, 1);
+    CHECK_EQ(L->global->hotinflightsize, 0);
+    CHECK(callTierUpGlobal(L, "f", 100));
+}
+
+TEST_CASE("TierUpBatchKeepsUnreachableProtosAliveUntilItBinds")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(2, 8);
+    lua_State* L = globalState.get();
+
+    runTierUpChunk(L, "=TierUpBatchUnreachable", "local function f() return 1 end f() f()");
+    REQUIRE_EQ(Luau::CodeGen::getHotQueueSize(L), 1);
+    Luau::CodeGen::HotBatch* batch = Luau::CodeGen::takeHot(L, SIZE_MAX);
+    REQUIRE(batch != nullptr);
+
+    // Nothing references the chunk or its function, but the pin keeps the proto and its constants alive for the worker.
+    lua_gc(L, LUA_GCCOLLECT, 0);
+    lua_gc(L, LUA_GCCOLLECT, 0);
+    Luau::CodeGen::compileHotBatch(batch);
+
+    Luau::CodeGen::CompilationStats stats = {};
+    CHECK(Luau::CodeGen::bindHotBatch(L, batch, &stats).result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    CHECK_EQ(stats.functionsBound, 1);
+    CHECK_EQ(L->global->hotinflightsize, 0);
+
+    // Once unpinned, the proto and its native code are collected normally.
+    lua_gc(L, LUA_GCCOLLECT, 0);
+    CHECK_EQ(Luau::CodeGen::getHotQueueSize(L), 0);
+}
+
+TEST_CASE("TierUpBatchDoesNotPinAProtoTheSweepWillFree")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(2, 8);
+    lua_State* L = globalState.get();
+
+    runTierUpChunk(L, "=TierUpBatchDead", "local function f() return 1 end f() f()");
+    REQUIRE_EQ(Luau::CodeGen::getHotQueueSize(L), 1);
+    const Proto* queued = L->global->hotqueue[0];
+
+    // Step until the collector has decided what is dead but before the sweep frees the queued proto.
+    lua_gc(L, LUA_GCCOLLECT, 0);
+    runTierUpChunk(L, "=TierUpBatchRequeue", "local function g() return 2 end g() g()");
+    while (L->global->gcstate != GCSsweep)
+        lua_gc(L, LUA_GCSTEP, 0);
+    REQUIRE_EQ(Luau::CodeGen::getHotQueueSize(L), 1);
+    queued = L->global->hotqueue[0];
+    REQUIRE(isdead(L->global, obj2gco(const_cast<Proto*>(queued))));
+
+    CHECK(Luau::CodeGen::takeHot(L, SIZE_MAX) == nullptr);
+    CHECK_EQ(L->global->hotinflightsize, 0);
+    lua_gc(L, LUA_GCCOLLECT, 0);
+}
+
+TEST_CASE("TierUpBatchSkipsProtosCompiledOrBrokenMeanwhile")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(1, 8);
+    lua_State* L = globalState.get();
+
+    loadTierUpChunk(L, "=TierUpBatchStale", "function compiled() return is_native() end\nfunction stopped()\n  return is_native()\nend");
+    lua_pushvalue(L, -1);
+    REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
+    callTierUpGlobal(L, "compiled", 0);
+    callTierUpGlobal(L, "stopped", 0);
+    while (Luau::CodeGen::getHotQueueSize(L) > 2)
+        Luau::CodeGen::compileHot(L, 0);
+
+    Luau::CodeGen::HotBatch* batch = Luau::CodeGen::takeHot(L, SIZE_MAX);
+    REQUIRE(batch != nullptr);
+
+    // An explicit compile and a breakpoint arrive while the batch is in flight.
+    lua_getglobal(L, "compiled");
+    REQUIRE(Luau::CodeGen::compile(L, -1, Luau::CodeGen::CodeGen_ColdFunctions).result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    lua_pop(L, 1);
+    lua_getglobal(L, "stopped");
+    lua_breakpoint(L, -1, 3, true);
+    lua_pop(L, 1);
+
+    Luau::CodeGen::compileHotBatch(batch);
+    Luau::CodeGen::CompilationStats stats = {};
+    CHECK(Luau::CodeGen::bindHotBatch(L, batch, &stats).result == Luau::CodeGen::CodeGenCompilationResult::Success);
+    CHECK_EQ(stats.functionsCompiled, 2);
+    CHECK_EQ(stats.functionsBound, 0);
+    CHECK(callTierUpGlobal(L, "compiled", 0));
+    lua_pop(L, 1);
+}
+
+TEST_CASE("TierUpDiscardedBatchReleasesItsPins")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(1, 8);
+    lua_State* L = globalState.get();
+
+    runTierUpChunk(L, "=TierUpBatchDiscard", "function f() return is_native() end");
+    callTierUpGlobal(L, "f", 0);
+    Luau::CodeGen::HotBatch* batch = Luau::CodeGen::takeHot(L, SIZE_MAX);
+    REQUIRE(batch != nullptr);
+    CHECK_GE(L->global->hotinflightsize, 1);
+
+    Luau::CodeGen::discardHotBatch(L, batch);
+    CHECK_EQ(L->global->hotinflightsize, 0);
+    CHECK_FALSE(callTierUpGlobal(L, "f", 0));
+}
+
+TEST_CASE("TierUpBatchPinnedDuringACycleSurvivesIt")
+{
+    if (!codegen || !luau_codegen_supported())
+        return;
+
+    StateRef globalState = makeTierUpState(2, 8);
+    lua_State* L = globalState.get();
+
+    // The function becomes unreachable after a finished cycle, then the next cycle's root mark runs without the pin.
+    lua_gc(L, LUA_GCCOLLECT, 0);
+    runTierUpChunk(L, "=TierUpBatchMidCycle", "local function f() return 1 end f() f()");
+    REQUIRE_EQ(Luau::CodeGen::getHotQueueSize(L), 1);
+    while (L->global->gcstate != GCSpropagate)
+        lua_gc(L, LUA_GCSTEP, 0);
+    Luau::CodeGen::HotBatch* batch = Luau::CodeGen::takeHot(L, SIZE_MAX);
+    REQUIRE(batch != nullptr);
+    Proto* pinned = L->global->hotinflight[0];
+
+    while (L->global->gcstate != GCSsweep)
+        lua_gc(L, LUA_GCSTEP, 0);
+    CHECK_FALSE(isdead(L->global, obj2gco(pinned)));
+
+    Luau::CodeGen::compileHotBatch(batch);
+    Luau::CodeGen::CompilationStats stats = {};
+    Luau::CodeGen::bindHotBatch(L, batch, &stats);
+    CHECK_EQ(stats.functionsBound, 1);
+    lua_gc(L, LUA_GCCOLLECT, 0);
 }
 
 TEST_SUITE_END();

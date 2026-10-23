@@ -13,6 +13,7 @@
 
 #include "lapi.h"
 #include "lfunc.h"
+#include "lgc.h"
 #include "lstate.h"
 
 #include <algorithm>
@@ -602,8 +603,161 @@ template<typename AssemblyBuilder>
     return compileProtos(moduleId, L, codeGenContext, protos, options, stats);
 }
 
-// Compiles uncompiled protos into one native module. Their bytecode ids must be unique and ascending, because the module sorts and binds its
-// functions by bytecode id.
+// One native module's generated code, built from protos whose bytecode ids are unique and ascending, because the module sorts and binds its
+// functions by bytecode id. Building reads only the sources, so it can run away from the VM thread when they are snapshots.
+struct CompiledModule
+{
+    // The protos the module binds to, in the order of the sources it was built from.
+    std::vector<Proto*> targets;
+    std::vector<Proto*> sources;
+    std::vector<NativeProtoExecDataPtr> nativeProtos;
+    std::vector<uint8_t> code;
+    std::vector<uint8_t> data;
+    CompilationResult result;
+    CompilationStats stats;
+};
+
+static void compileModule(CompiledModule& module, const CompilationOptions& options, const VmEnvironmentInfo& envInfo)
+{
+    module.stats.functionsTotal = uint32_t(module.sources.size());
+
+#if defined(CODEGEN_TARGET_A64)
+    static unsigned int cpuFeatures = getCpuFeaturesA64();
+    A64::AssemblyBuilderA64 build(/* logger= */ nullptr, cpuFeatures);
+#else
+    static unsigned int cpuFeatures = getCpuFeaturesX64();
+    X64::AssemblyBuilderX64 build(/* logger= */ nullptr, cpuFeatures);
+#endif
+
+    ModuleHelpers helpers;
+#if defined(CODEGEN_TARGET_A64)
+    A64::assembleHelpers(/* logger= */ nullptr, build, helpers);
+#else
+    X64::assembleHelpers(/* logger= */ nullptr, build, helpers);
+#endif
+
+    module.nativeProtos.reserve(module.sources.size());
+
+    uint32_t totalIrInstCount = 0;
+
+    for (Proto* source : module.sources)
+    {
+        CodeGenCompilationResult protoResult = CodeGenCompilationResult::Success;
+
+        NativeProtoExecDataPtr nativeExecData =
+            createNativeFunction(nullptr, build, helpers, source, totalIrInstCount, options, protoResult, envInfo);
+        if (nativeExecData != nullptr)
+        {
+            module.nativeProtos.push_back(std::move(nativeExecData));
+        }
+        else
+        {
+            module.result.protoFailures.push_back({protoResult, source->debugname ? getstr(source->debugname) : "", source->linedefined});
+        }
+    }
+
+    // Very large modules might result in overflowing a jump offset; in this
+    // case we currently abandon the entire module
+    if (!build.finalize())
+    {
+        module.nativeProtos.clear();
+        module.result.result = CodeGenCompilationResult::CodeGenAssemblerFinalizationFailure;
+        return;
+    }
+
+    // If no functions were assembled, we don't need to allocate/copy executable pages for helpers
+    if (module.nativeProtos.empty())
+        return;
+
+    for (const NativeProtoExecDataPtr& nativeExecData : module.nativeProtos)
+    {
+        NativeProtoExecDataHeader& header = getNativeProtoExecDataHeader(nativeExecData.get());
+
+        module.stats.bytecodeSizeBytes += header.bytecodeInstructionCount * sizeof(Instruction);
+
+        // Account for the native -> bytecode instruction offsets mapping:
+        module.stats.nativeMetadataSizeBytes += header.bytecodeInstructionCount * sizeof(uint32_t);
+    }
+
+    module.stats.functionsCompiled += uint32_t(module.nativeProtos.size());
+    module.stats.nativeCodeSizeBytes += build.code.size() * sizeof(build.code[0]);
+    module.stats.nativeDataSizeBytes += build.data.size();
+
+    for (size_t i = 0; i < module.nativeProtos.size(); ++i)
+    {
+        NativeProtoExecDataHeader& header = getNativeProtoExecDataHeader(module.nativeProtos[i].get());
+
+        uint32_t begin = uint32_t(reinterpret_cast<uintptr_t>(header.entryOffsetOrAddress));
+        uint32_t end = i + 1 < module.nativeProtos.size()
+                           ? uint32_t(uintptr_t(getNativeProtoExecDataHeader(module.nativeProtos[i + 1].get()).entryOffsetOrAddress))
+                           : uint32_t(build.code.size() * sizeof(build.code[0]));
+
+        CODEGEN_ASSERT(begin < end);
+
+        header.nativeCodeSize = end - begin;
+    }
+
+    const uint8_t* code = reinterpret_cast<const uint8_t*>(build.code.data());
+    module.code.assign(code, code + build.code.size() * sizeof(build.code[0]));
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(build.data.data());
+    module.data.assign(data, data + build.data.size());
+}
+
+// Installs a module's code into its targets. A target compiled through another path, or given a breakpoint, while the module was built
+// keeps its current state, and its generated function is dropped.
+static CompilationResult bindCompiledModule(const std::optional<ModuleId>& moduleId, BaseCodeGenContext* codeGenContext, CompiledModule& module)
+{
+    CompilationResult result = std::move(module.result);
+    if (module.nativeProtos.empty())
+        return result;
+
+    std::vector<Proto*> targets;
+    std::vector<NativeProtoExecDataPtr> nativeProtos;
+    for (NativeProtoExecDataPtr& nativeProto : module.nativeProtos)
+    {
+        uint32_t bytecodeId = getNativeProtoExecDataHeader(nativeProto.get()).bytecodeId;
+        auto target = std::find_if(
+            module.targets.begin(),
+            module.targets.end(),
+            [bytecodeId](const Proto* proto)
+            {
+                return uint32_t(proto->bytecodeid) == bytecodeId;
+            }
+        );
+        CODEGEN_ASSERT(target != module.targets.end());
+
+        if ((*target)->execdata == nullptr && (*target)->debuginsn == nullptr)
+        {
+            targets.push_back(*target);
+            nativeProtos.push_back(std::move(nativeProto));
+        }
+    }
+    module.nativeProtos.clear();
+
+    if (nativeProtos.empty())
+        return result;
+
+    const ModuleBindResult bindResult = codeGenContext->bindModule(
+        moduleId, targets, std::move(nativeProtos), module.data.data(), module.data.size(), module.code.data(), module.code.size()
+    );
+
+    module.stats.functionsBound = bindResult.functionsBound;
+
+    if (bindResult.compilationResult != CodeGenCompilationResult::Success)
+        result.result = bindResult.compilationResult;
+
+    return result;
+}
+
+static VmEnvironmentInfo getVmEnvironmentInfo(lua_State* L)
+{
+    VmEnvironmentInfo envInfo;
+    envInfo.hasPcall = L->global->builtinPcall != nullptr;
+    envInfo.hasXpcall = L->global->builtinXpcall != nullptr;
+    return envInfo;
+}
+
+// Compiles uncompiled protos into one native module on the VM thread. Their bytecode ids must be unique and ascending.
 [[nodiscard]] static CompilationResult compileProtos(
     const std::optional<ModuleId>& moduleId,
     lua_State* L,
@@ -627,109 +781,16 @@ template<typename AssemblyBuilder>
         }
     }
 
-#if defined(CODEGEN_TARGET_A64)
-    static unsigned int cpuFeatures = getCpuFeaturesA64();
-    A64::AssemblyBuilderA64 build(/* logger= */ nullptr, cpuFeatures);
-#else
-    static unsigned int cpuFeatures = getCpuFeaturesX64();
-    X64::AssemblyBuilderX64 build(/* logger= */ nullptr, cpuFeatures);
-#endif
-
-    ModuleHelpers helpers;
-#if defined(CODEGEN_TARGET_A64)
-    A64::assembleHelpers(/* logger= */ nullptr, build, helpers);
-#else
-    X64::assembleHelpers(/* logger= */ nullptr, build, helpers);
-#endif
-
-    VmEnvironmentInfo envInfo;
-    envInfo.hasPcall = L->global->builtinPcall != nullptr;
-    envInfo.hasXpcall = L->global->builtinXpcall != nullptr;
-
-    CompilationResult compilationResult;
-
-    std::vector<NativeProtoExecDataPtr> nativeProtos;
-    nativeProtos.reserve(protos.size());
-
-    uint32_t totalIrInstCount = 0;
-
-    for (size_t i = 0; i != protos.size(); ++i)
-    {
-        CodeGenCompilationResult protoResult = CodeGenCompilationResult::Success;
-
-        NativeProtoExecDataPtr nativeExecData =
-            createNativeFunction(nullptr, build, helpers, protos[i], totalIrInstCount, options, protoResult, envInfo);
-        if (nativeExecData != nullptr)
-        {
-            nativeProtos.push_back(std::move(nativeExecData));
-        }
-        else
-        {
-            compilationResult.protoFailures.push_back(
-                {protoResult, protos[i]->debugname ? getstr(protos[i]->debugname) : "", protos[i]->linedefined}
-            );
-        }
-    }
-
-    // Very large modules might result in overflowing a jump offset; in this
-    // case we currently abandon the entire module
-    if (!build.finalize())
-    {
-        compilationResult.result = CodeGenCompilationResult::CodeGenAssemblerFinalizationFailure;
-        return compilationResult;
-    }
-
-    // If no functions were assembled, we don't need to allocate/copy executable pages for helpers
-    if (nativeProtos.empty())
-        return compilationResult;
+    CompiledModule module;
+    module.targets = protos;
+    module.sources = protos;
+    compileModule(module, options, getVmEnvironmentInfo(L));
+    CompilationResult result = bindCompiledModule(moduleId, codeGenContext, module);
 
     if (stats != nullptr)
-    {
-        for (const NativeProtoExecDataPtr& nativeExecData : nativeProtos)
-        {
-            NativeProtoExecDataHeader& header = getNativeProtoExecDataHeader(nativeExecData.get());
+        *stats = module.stats;
 
-            stats->bytecodeSizeBytes += header.bytecodeInstructionCount * sizeof(Instruction);
-
-            // Account for the native -> bytecode instruction offsets mapping:
-            stats->nativeMetadataSizeBytes += header.bytecodeInstructionCount * sizeof(uint32_t);
-        }
-
-        stats->functionsCompiled += uint32_t(nativeProtos.size());
-        stats->nativeCodeSizeBytes += build.code.size() * sizeof(build.code[0]);
-        stats->nativeDataSizeBytes += build.data.size();
-    }
-
-    for (size_t i = 0; i < nativeProtos.size(); ++i)
-    {
-        NativeProtoExecDataHeader& header = getNativeProtoExecDataHeader(nativeProtos[i].get());
-
-        uint32_t begin = uint32_t(reinterpret_cast<uintptr_t>(header.entryOffsetOrAddress));
-        uint32_t end = i + 1 < nativeProtos.size() ? uint32_t(uintptr_t(getNativeProtoExecDataHeader(nativeProtos[i + 1].get()).entryOffsetOrAddress))
-                                                   : uint32_t(build.code.size() * sizeof(build.code[0]));
-
-        CODEGEN_ASSERT(begin < end);
-
-        header.nativeCodeSize = end - begin;
-    }
-
-    const ModuleBindResult bindResult = codeGenContext->bindModule(
-        moduleId,
-        protos,
-        std::move(nativeProtos),
-        reinterpret_cast<const uint8_t*>(build.data.data()),
-        build.data.size(),
-        reinterpret_cast<const uint8_t*>(build.code.data()),
-        build.code.size() * sizeof(build.code[0])
-    );
-
-    if (stats != nullptr)
-        stats->functionsBound = bindResult.functionsBound;
-
-    if (bindResult.compilationResult != CodeGenCompilationResult::Success)
-        compilationResult.result = bindResult.compilationResult;
-
-    return compilationResult;
+    return result;
 }
 
 static void addStats(CompilationStats& total, const CompilationStats& stats)
@@ -759,11 +820,20 @@ int getHotQueueSize(lua_State* L)
     return L->global->hotqueuesize;
 }
 
-CompilationResult compileHot(lua_State* L, size_t instructionBudget, CompilationStats* stats)
+// A promotion batch compiled away from the VM thread. Its modules build from shallow proto copies whose bytecode is snapshotted at take,
+// because the interpreter patches instructions while it runs; the originals stay pinned until the batch binds or is discarded.
+struct HotBatch
 {
-    BaseCodeGenContext* codeGenContext = getCodeGenContext(L);
-    if (codeGenContext == nullptr)
-        return CompilationResult{CodeGenCompilationResult::CodeGenNotInitialized};
+    std::vector<CompiledModule> modules;
+    std::vector<std::vector<Instruction>> code;
+    std::vector<Proto> copies;
+    VmEnvironmentInfo envInfo;
+};
+
+HotBatch* takeHot(lua_State* L, size_t instructionBudget)
+{
+    if (getCodeGenContext(L) == nullptr)
+        return nullptr;
 
     global_State* g = L->global;
     std::vector<Proto*> taken;
@@ -775,7 +845,8 @@ CompilationResult compileHot(lua_State* L, size_t instructionBudget, Compilation
         Proto* proto = nullptr;
         luaF_takehot(L, &proto, 1);
 
-        if (proto->execdata != nullptr)
+        // A proto the collector has found unreachable may wait in the weak queue until the sweep frees it, so it is not pinned.
+        if (proto->execdata != nullptr || isdead(g, obj2gco(proto)))
             continue;
 
         instructions += size_t(proto->sizecode);
@@ -783,20 +854,27 @@ CompilationResult compileHot(lua_State* L, size_t instructionBudget, Compilation
     }
 
     if (taken.empty())
-        return CompilationResult{CodeGenCompilationResult::NothingToCompile};
+        return nullptr;
+
+    // Reserving first means a memory error leaves no proto pinned without a batch to release it.
+    luaF_reservepins(L, int(taken.size()));
+    std::unique_ptr<HotBatch> batch = std::make_unique<HotBatch>();
+    batch->envInfo = getVmEnvironmentInfo(L);
+    batch->code.reserve(taken.size());
+    // The copies vector never reallocates after this, because sources point into it.
+    batch->copies.reserve(taken.size());
 
     // Bytecode ids are unique only within one loaded chunk, so protos from different chunks can collide.
-    std::vector<std::vector<Proto*>> modules;
     for (Proto* proto : taken)
     {
         auto module = std::find_if(
-            modules.begin(),
-            modules.end(),
-            [proto](const std::vector<Proto*>& members)
+            batch->modules.begin(),
+            batch->modules.end(),
+            [proto](const CompiledModule& members)
             {
                 return std::none_of(
-                    members.begin(),
-                    members.end(),
+                    members.targets.begin(),
+                    members.targets.end(),
                     [proto](const Proto* member)
                     {
                         return member->bytecodeid == proto->bytecodeid;
@@ -805,32 +883,68 @@ CompilationResult compileHot(lua_State* L, size_t instructionBudget, Compilation
             }
         );
 
-        if (module == modules.end())
-            modules.emplace_back().push_back(proto);
-        else
-            module->push_back(proto);
+        if (module == batch->modules.end())
+            module = batch->modules.emplace(batch->modules.end());
+
+        module->targets.push_back(proto);
     }
 
-    // Promotion has runtime evidence that a function is hot, so the compiler's cold-function heuristic and module markers do not apply.
-    CompilationOptions options{CodeGen_ColdFunctions};
-    CompilationResult combined;
-
-    for (std::vector<Proto*>& members : modules)
+    for (CompiledModule& module : batch->modules)
     {
         std::sort(
-            members.begin(),
-            members.end(),
+            module.targets.begin(),
+            module.targets.end(),
             [](const Proto* left, const Proto* right)
             {
                 return left->bytecodeid < right->bytecodeid;
             }
         );
 
-        CompilationStats moduleStats;
-        CompilationResult result = compileProtos({}, L, codeGenContext, members, options, stats != nullptr ? &moduleStats : nullptr);
+        for (Proto* target : module.targets)
+        {
+            luaF_pinhot(L, target);
+            std::vector<Instruction>& code = batch->code.emplace_back(target->code, target->code + target->sizecode);
+            Proto& copy = batch->copies.emplace_back(*target);
+            copy.code = code.data();
+            module.sources.push_back(&copy);
+        }
+    }
+
+    return batch.release();
+}
+
+void compileHotBatch(HotBatch* batch)
+{
+    // Promotion has runtime evidence that a function is hot, so the compiler's cold-function heuristic and module markers do not apply.
+    CompilationOptions options{CodeGen_ColdFunctions};
+
+    for (CompiledModule& module : batch->modules)
+        compileModule(module, options, batch->envInfo);
+}
+
+static void unpinBatch(lua_State* L, HotBatch* batch)
+{
+    for (CompiledModule& module : batch->modules)
+    {
+        for (Proto* target : module.targets)
+            luaF_unpinhot(L, target);
+    }
+}
+
+CompilationResult bindHotBatch(lua_State* L, HotBatch* batch, CompilationStats* stats)
+{
+    std::unique_ptr<HotBatch> owned(batch);
+    BaseCodeGenContext* codeGenContext = getCodeGenContext(L);
+    CODEGEN_ASSERT(codeGenContext != nullptr);
+
+    CompilationResult combined;
+
+    for (CompiledModule& module : owned->modules)
+    {
+        CompilationResult result = bindCompiledModule({}, codeGenContext, module);
 
         if (stats != nullptr)
-            addStats(*stats, moduleStats);
+            addStats(*stats, module.stats);
 
         if (result.result != CodeGenCompilationResult::Success && combined.result == CodeGenCompilationResult::Success)
             combined.result = result.result;
@@ -838,7 +952,27 @@ CompilationResult compileHot(lua_State* L, size_t instructionBudget, Compilation
         combined.protoFailures.insert(combined.protoFailures.end(), result.protoFailures.begin(), result.protoFailures.end());
     }
 
+    unpinBatch(L, owned.get());
     return combined;
+}
+
+void discardHotBatch(lua_State* L, HotBatch* batch)
+{
+    std::unique_ptr<HotBatch> owned(batch);
+    unpinBatch(L, owned.get());
+}
+
+CompilationResult compileHot(lua_State* L, size_t instructionBudget, CompilationStats* stats)
+{
+    if (getCodeGenContext(L) == nullptr)
+        return CompilationResult{CodeGenCompilationResult::CodeGenNotInitialized};
+
+    HotBatch* batch = takeHot(L, instructionBudget);
+    if (batch == nullptr)
+        return CompilationResult{CodeGenCompilationResult::NothingToCompile};
+
+    compileHotBatch(batch);
+    return bindHotBatch(L, batch, stats);
 }
 
 CompilationResult compile(const ModuleId& moduleId, lua_State* L, int idx, const CompilationOptions& options, CompilationStats* stats)
