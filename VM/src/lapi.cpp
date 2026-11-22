@@ -24,6 +24,20 @@ LUAU_FASTFLAGVARIABLE(LuauNewPointerEncode)
 LUAU_FASTFLAGVARIABLE(LuauCoroutineFinally)
 LUAU_FASTFLAGVARIABLE(LuauFrozenMetaButterfly)
 
+// mlua's C ABI for setting boolean fast flags during VM initialization.
+LUA_API int luau_setfflag(const char* name, int enabled)
+{
+    for (Luau::FValue<bool>* flag = Luau::FValue<bool>::list; flag; flag = flag->next)
+    {
+        if (strcmp(flag->name, name) == 0)
+        {
+            flag->value = enabled != 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /*
  * This file contains most implementations of core Lua APIs from lua.h.
  *
